@@ -646,7 +646,9 @@ class GRPOFullFinetuneRecipeDistributed(FTRecipeInterface):
         # Do some reward modelingggggggg
         # responses :: [B x G, L]
         responses = responses.reshape(batch_size, grpo_size, -1)  # [B, G, L]
-        rewards, successes = batched_rewards(self._tokenizer, responses, answers)
+        rewards, successes = batched_rewards(
+            self._tokenizer, responses, answers, device=self._device
+        )
         rewards = rewards.to(self._device)  # [B, G]
         successes = successes.to(self._device)  # [B, G]
 
