@@ -298,8 +298,8 @@ def batched_rewards(
     for b in range(batch_size):
 
         for g in range(grpo_size):
-
-            answer = answers[b][g]
+            # print(answers)
+            answer = answers[b]
 
             text_completion = tokenizer.decode(completions[b, g].tolist())
 
