@@ -59,16 +59,16 @@ TEXT_SPECIAL_TOKENS = {
 VISION_SPECIAL_TOKENS = {
     "<|image_start|>": 200080,
     "<|image_end|>": 200081,
-    "<|vision_reserved_special_token_0|>": 200082,
-    "<|vision_reserved_special_token_1|>": 200083,
+    "<|vid_start|>": 200082,
+    "<|vid_end|>": 200083,
     "<|tile_x_separator|>": 200084,
     "<|tile_y_separator|>": 200085,
-    "<|vision_reserved_special_token_2|>": 200086,
-    "<|vision_reserved_special_token_3|>": 200087,
-    "<|vision_reserved_special_token_4|>": 200088,
-    "<|vision_reserved_special_token_5|>": 200089,
+    "<|vision_reserved_special_token_0|>": 200086,
+    "<|vid_frame_separator|>": 200087,
+    "<|vision_reserved_special_token_1|>": 200088,
+    "<|vision_reserved_special_token_2|>": 200089,
     "<|image|>": 200090,
-    "<|vision_reserved_special_token_6|>": 200091,
+    "<|video|>": 200091,
     "<|patch|>": 200092,
 } | get_reserved_special_tokens(200093, 201134, "vision", 7)
 
@@ -165,6 +165,12 @@ class Llama4Tokenizer(ModelTokenizer, Transform):
         self.image_end = self.special_tokens["<|image_end|>"]
         self.tile_x_separator = self.special_tokens["<|tile_x_separator|>"]
         self.tile_y_separator = self.special_tokens["<|tile_y_separator|>"]
+
+        # Video tokens
+        self.video_id = self.special_tokens["<|patch|>"]
+        self.video_start = self.special_tokens["<|vid_start|>"]
+        self.video_end = self.special_tokens["<|vid_end|>"]
+        self.frame_separator = self.special_tokens["<|vid_frame_separator|>"]
 
         # Reasoning tokens
         self.reasoning_start = self.special_tokens["<|reasoning_thinking_start|>"]
@@ -302,6 +308,31 @@ class Llama4Tokenizer(ModelTokenizer, Transform):
             tokens.extend(single_tile_tokens)
         return tokens
 
+    def _get_video_tokens(self, num_frames: int, patch_tokens_per_frame: int) -> list[int]:
+        """
+        Tokenize video content with frame structure similar to Huggingface implementation.
+
+        Args:
+            num_frames (int): Number of frames in the video
+            patch_tokens_per_frame (int): Number of patch tokens per frame
+
+        Returns:
+            list[int]: Video tokens with frame separators
+        """
+        tokens = []
+        tokens.append(self.video_start)
+
+        for frame_idx in range(num_frames):
+            # Add video patch tokens for this frame
+            tokens.extend([self.video_id] * patch_tokens_per_frame)
+
+            # Add frame separator (except for the last frame)
+            if frame_idx < num_frames - 1:
+                tokens.append(self.frame_separator)
+
+        tokens.append(self.video_end)
+        return tokens
+
     def _tokenize_header(self, message: Message) -> list[int]:
         """
         Tokenize header start, message role, and header end as list of ids
@@ -334,6 +365,12 @@ class Llama4Tokenizer(ModelTokenizer, Transform):
                 aspect_ratio = item.get("aspect_ratio", torch.tensor([1, 1]))
                 tokenized_body += self._get_tile_grid_tokens(
                     patch_tokens_per_tile, aspect_ratio
+                )
+            elif item["type"] == "video":
+                num_frames = item.get("num_frames", 1)
+                patch_tokens_per_frame = item.get("patch_tokens_per_frame", 1)
+                tokenized_body += self._get_video_tokens(
+                    num_frames, patch_tokens_per_frame
                 )
 
         return tokenized_body
