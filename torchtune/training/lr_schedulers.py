@@ -12,6 +12,32 @@ from torch.optim.lr_scheduler import LambdaLR
 from torchtune.training.memory import OptimizerInBackwardWrapper
 
 
+def _ensure_step_is_bound_like_method(optimizer):
+    """
+    torch.compile and some fused optimizers may replace optimizer.step with a
+    plain function that does not have the __func__ / __self__ attributes that
+    PyTorch's LR schedulers expect for their monkey-patching logic.
+
+    This wrapper ensures that optimizer.step exposes the minimal attributes
+    required for schedulers (e.g., LambdaLR) to patch and track calls safely.
+    """
+    step_fn = optimizer.step
+
+    # If already behaves like a bound method (normal case), do nothing
+    if hasattr(step_fn, "__func__") and hasattr(step_fn, "__self__"):
+        return
+
+    # Otherwise wrap to simulate a bound method
+    def step_wrapper(*args, **kwargs):
+        return step_fn(*args, **kwargs)
+
+    # Provide the attributes that LR schedulers rely on
+    step_wrapper.__func__ = step_fn
+    step_wrapper.__self__ = optimizer
+
+    optimizer.step = step_wrapper
+
+
 def get_cosine_schedule_with_warmup(
     optimizer: torch.optim.Optimizer,
     num_warmup_steps: int,
@@ -39,6 +65,7 @@ def get_cosine_schedule_with_warmup(
     Returns:
         torch.optim.lr_scheduler.LambdaLR with the appropriate schedule.
     """
+    _ensure_step_is_bound_like_method(optimizer)
 
     def lr_lambda(current_step: int) -> float:
         # linear warmup phase
