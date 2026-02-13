@@ -148,6 +148,7 @@ class InferenceRecipe:
             self._logger.info(
                 f"Model was initialized with precision {self._dtype} and TP degree {tp_degree}."
             )
+            config.log_config(recipe_name="InferenceRecipe", cfg=cfg)
 
         # Instantiate transforms
         self.model_transform = config.instantiate(cfg.tokenizer)
@@ -302,7 +303,6 @@ class InferenceRecipe:
 
 @config.parse
 def main(cfg: DictConfig) -> None:
-    config.log_config(recipe_name="InferenceRecipe", cfg=cfg)
     recipe = InferenceRecipe(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.generate(cfg=cfg)

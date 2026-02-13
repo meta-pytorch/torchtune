@@ -337,6 +337,8 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             # log config with parameter override
             self._metric_logger.log_config(cfg)
 
+            config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
+
         # Load the base model
         state_dict = self._checkpoint_client.load_base_checkpoint()
 
@@ -1158,7 +1160,6 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
     recipe = FullFinetuneRecipeDistributed(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
