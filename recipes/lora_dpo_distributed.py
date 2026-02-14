@@ -254,7 +254,7 @@ class LoRADPORecipeDistributed(FTRecipeInterface):
 
             # log config with parameter override
             self._metric_logger.log_config(cfg)
-
+            config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
         utils.log_rank_zero(self._logger, "metric logger is initialized.")
 
         checkpoint_dict = self._checkpoint_client.load_base_checkpoint()
@@ -853,8 +853,6 @@ def recipe_main(cfg: DictConfig) -> None:
         # Utilize all available CPU cores for intra-op parallelism. This provides ~2x
         # speed up when benchmarking fused AdamW on CPU
         training.set_torch_num_threads()
-
-    config.log_config(recipe_name="LoRADPORecipeDistributed", cfg=cfg)
 
     recipe = LoRADPORecipeDistributed(cfg=cfg)
     recipe.setup(cfg=cfg)

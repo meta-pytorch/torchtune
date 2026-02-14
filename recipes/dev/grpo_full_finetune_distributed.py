@@ -129,6 +129,7 @@ class GRPOFullFinetuneRecipeDistributed(FTRecipeInterface):
         if self._is_rank_zero:
             self._metric_logger = config.instantiate(cfg.metric_logger)
             self._metric_logger.log_config(cfg)
+            config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
 
         # Setup model to train
         checkpoint_dict = self.load_checkpoint(cfg_checkpointer=cfg.checkpointer)
@@ -973,7 +974,6 @@ def recipe_main(cfg: DictConfig) -> None:
     """
 
     recipe = GRPOFullFinetuneRecipeDistributed(cfg=cfg)
-    config.log_config(recipe_name="GRPOFullFinetuneRecipeDistributed", cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
     recipe.cleanup()
