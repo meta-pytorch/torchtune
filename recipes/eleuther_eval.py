@@ -414,7 +414,7 @@ class _LLMEvalWrapper(HFLM):
                 "Any decoding strategy other than greedy is not supported."
             )
 
-        # if we've recieved fewer than self._batch_size samples in the current
+        # if we've received fewer than self._batch_size samples in the current
         # batch we need to pad the batch out. here we're padding the end of the
         # current batch to the correct length. this is because when we use static
         # KV-caches, the model will expect a fixed batch size for all samples.
