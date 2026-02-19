@@ -20,14 +20,14 @@ from torchao.float8.float8_tensor_parallel import (
 )
 from torchao.quantization import (
     Int4WeightOnlyConfig,
-    Int8DynamicActivationInt4WeightConfig,
+    Int8DynamicActivationIntxWeightConfig,
     quantize_,
 )
 from torchao.quantization.qat import (
     Int4WeightOnlyQATQuantizer,
     Int8DynActInt4WeightQATQuantizer,
 )
-
+from torchao.quantization.granularity import PerGroup
 
 from torchtune.modules.peft.lora import LoRALinear, QATLoRALinear
 
@@ -86,7 +86,7 @@ class Int8DynActInt4WeightQuantizer:
         self.groupsize = groupsize
 
     def quantize(self, model):
-        quantize_fn = Int8DynamicActivationInt4WeightConfig(self.groupsize)
+        quantize_fn = Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(self.groupsize))
         quantize_(model, quantize_fn)
         return model
 
