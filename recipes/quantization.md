@@ -52,7 +52,7 @@ quantizer:
   groupsize: 256
 ```
 
-Noet: we can use `Int8DynActInt4WeightQuantizer` to load a QAT quantized model since it's the same type of quantization.
+Note: we can use `Int8DynActInt4WeightQuantizer` to load a QAT quantized model since it's the same type of quantization.
 
 and run evaluation:
 ```bash
