@@ -35,6 +35,8 @@ dependencies = [
 
     # Multimodal
     "Pillow>=9.4.0",
+    # Pin pyarrow to avoid breaking change in v21 (see #2890)
+    "pyarrow<21.0.0",
 ]
 dynamic = ["version"]
 
