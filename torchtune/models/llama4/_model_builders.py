@@ -84,12 +84,14 @@ def llama4_scout_17b_16e(
     )
     return EarlyFusionModel(
         decoder,
-        encoders={"vision": vision_encoder},
+        encoders={"vision": vision_encoder, "video": vision_encoder},
         encoder_tokens={
             "vision": LLAMA4_SPECIAL_TOKENS["<|patch|>"],
+            "video": LLAMA4_SPECIAL_TOKENS["<|video|>"],
         },
         encoders_trainable={
             "vision": encoder_trainable,
+            "video": encoder_trainable,
         },
         decoder_trainable=decoder_trainable,
         fusion_trainable=fusion_trainable,
@@ -154,12 +156,14 @@ def llama4_maverick_17b_128e(
     )
     return EarlyFusionModel(
         decoder,
-        encoders={"vision": vision_encoder},
+        encoders={"vision": vision_encoder, "video": vision_encoder},
         encoder_tokens={
             "vision": LLAMA4_SPECIAL_TOKENS["<|patch|>"],
+            "video": LLAMA4_SPECIAL_TOKENS["<|video|>"],
         },
         encoders_trainable={
             "vision": encoder_trainable,
+            "video": encoder_trainable,
         },
         decoder_trainable=decoder_trainable,
         fusion_trainable=fusion_trainable,
@@ -314,12 +318,14 @@ def lora_llama4_scout_17b_16e(
     )
     return EarlyFusionModel(
         decoder,
-        encoders={"vision": vision_encoder},
+        encoders={"vision": vision_encoder, "video": vision_encoder},
         encoder_tokens={
             "vision": LLAMA4_SPECIAL_TOKENS["<|patch|>"],
+            "video": LLAMA4_SPECIAL_TOKENS["<|video|>"],
         },
         encoders_trainable={
             "vision": encoder_trainable != TrainableParams.FROZEN,
+            "video": encoder_trainable != TrainableParams.FROZEN,
         },
         decoder_trainable=decoder_trainable != TrainableParams.FROZEN,
         fusion_trainable=fusion_trainable != TrainableParams.FROZEN,
