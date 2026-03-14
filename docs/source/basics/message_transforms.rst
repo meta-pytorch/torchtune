@@ -90,6 +90,9 @@ This can be used directly from the config.
     dataset:
       _component_: data.dataset.custom_dataset
 
+For a full end-to-end walkthrough (custom transform + ``SFTDataset`` + config wiring), see
+:ref:`custom_dataset_usage_label`.
+
 
 Example message transforms
 --------------------------
