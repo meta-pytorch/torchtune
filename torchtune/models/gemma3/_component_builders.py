@@ -200,10 +200,7 @@ def lora_gemma3(
 
     tok_embeddings = GemmaNormEmbeddings(vocab_size, embed_dim)
     output_proj = TiedLinear(tok_embeddings)
-    
-    local_rope = RotaryPositionalEmbeddings(dim=head_dim, max_seq_len=max_seq_len, base=local_rope_base)
-    global_rope = RotaryPositionalEmbeddings(dim=head_dim, max_seq_len=max_seq_len, base=global_rope_base)
-    
+
     layers = nn.ModuleList()
     for layer_idx in range(num_layers):
         if apply_lora_to_mlp:
@@ -218,28 +215,28 @@ def lora_gemma3(
             )
         else:
             mlp = gemma_mlp(dim=embed_dim, hidden_dim=intermediate_dim, quantize_base=quantize_base)
-            
-        self_att = Gemma2Attention(
+
+        use_global_attention = (layer_idx % 6) == 0 and layer_idx != 0
+        self_att = lora_gemma3_self_attention(
+            lora_modules=lora_attn_modules,
             embed_dim=embed_dim,
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
             head_dim=head_dim,
-            q_proj=nn.Linear(embed_dim, num_heads * head_dim, bias=False),
-            k_proj=nn.Linear(embed_dim, num_kv_heads * head_dim, bias=False),
-            v_proj=nn.Linear(embed_dim, num_kv_heads * head_dim, bias=False),
-            output_proj=nn.Linear(num_heads * head_dim, embed_dim, bias=False),
-            # global rope is scaled
-            pos_embeddings=local_rope if (layer_idx % 6) != 0 or layer_idx == 0 else global_rope,
-            kv_cache=None,
             max_seq_len=max_seq_len,
-            # QK-norm is required
-            k_norm=GemmaRMSNorm(head_dim, eps=norm_eps),
-            q_norm=GemmaRMSNorm(head_dim, eps=norm_eps),
             attn_dropout=attn_dropout,
-            # perform global only on the each 6 layer, according to the tech-report
-            sliding_window_size=sliding_window_size if (layer_idx % 6) != 0 or layer_idx == 0 else None,
-            # we don't use softcapping in gemma3
-            query_pre_attn_scalar=query_pre_attn_scalar
+            norm_eps=norm_eps,
+            local_rope_base=local_rope_base,
+            global_rope_base=global_rope_base,
+            use_global_rope=use_global_attention,
+            # perform global attention every 6 layers according to the tech report
+            sliding_window_size=None if use_global_attention else sliding_window_size,
+            query_pre_attn_scalar=query_pre_attn_scalar,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            use_dora=use_dora,
+            quantize_base=quantize_base,
         )
         
         layer = TransformerSelfAttentionLayer(
@@ -284,6 +281,9 @@ def lora_gemma3_self_attention(
     max_seq_len: int,
     attn_dropout: float = 0.0,
     norm_eps: float = 1e-6,
+    local_rope_base: int = 10_000,
+    global_rope_base: int = 1_000_000,
+    use_global_rope: bool = False,
     sliding_window_size: Optional[int] = None,
     query_pre_attn_scalar: Optional[int],
     # LoRA args
@@ -367,7 +367,10 @@ def lora_gemma3_self_attention(
         )
     )
 
-    rope = RotaryPositionalEmbeddings(dim=head_dim, max_seq_len=max_seq_len, base=rope_base)
+    rope_base = global_rope_base if use_global_rope else local_rope_base
+    rope = RotaryPositionalEmbeddings(
+        dim=head_dim, max_seq_len=max_seq_len, base=rope_base
+    )
 
     self_att = Gemma2Attention(
             embed_dim=embed_dim,
@@ -386,7 +389,6 @@ def lora_gemma3_self_attention(
             # QK-norm is required
             k_norm=GemmaRMSNorm(head_dim, eps=norm_eps),
             q_norm=GemmaRMSNorm(head_dim, eps=norm_eps),
-            softcapping=None,
             query_pre_attn_scalar=query_pre_attn_scalar
         )
     return self_att

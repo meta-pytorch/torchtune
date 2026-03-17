@@ -83,7 +83,7 @@ def lora_gemma3_1b(
         embed_dim=1152,
         intermediate_dim=6912,
         # 1B is exception in terms of max_seq_len
-        max_seq_len=32_000,
+        max_seq_len=32768,
         attn_dropout=0.0,
         norm_eps=1e-6,
         sliding_window_size=512,
@@ -171,11 +171,10 @@ def lora_gemma3_4b(
         max_seq_len=128_000,
         attn_dropout=0.0,
         norm_eps=1e-6,
+        sliding_window_size=1024,
         # LoRA params
         lora_attn_modules=lora_attn_modules,
         apply_lora_to_mlp=apply_lora_to_mlp,
-        final_capping_value=50.0,
-        sliding_window_size=4096,
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
@@ -268,7 +267,7 @@ def lora_gemma3_12b(
         quantize_base=quantize_base,
     )
 
-qlora_gemma3_12b = partial(lora_gemma3_1b, quantize_base=True)
+qlora_gemma3_12b = partial(lora_gemma3_12b, quantize_base=True)
 
 qlora_gemma3_12b.__doc__ = """
 Builder for creating a Gemma3 model with QLoRA enabled. Base model weights in linear layers
@@ -338,7 +337,7 @@ def lora_gemma3_27b(
         head_dim=128,
         num_kv_heads=16,
         embed_dim=5376,
-        intermediate_dim=21504, # (embed_dim * 8) // 2
+        intermediate_dim=86016, # (embed_dim * 8) // 2
         max_seq_len=128_000,
         attn_dropout=0.0,
         norm_eps=1e-6,
@@ -353,11 +352,10 @@ def lora_gemma3_27b(
         quantize_base=quantize_base,
     )
 
-qlora_gemma3_27b = partial(lora_gemma3_1b, quantize_base=True)
+qlora_gemma3_27b = partial(lora_gemma3_27b, quantize_base=True)
 
 qlora_gemma3_27b.__doc__ = """
 Builder for creating a Gemma3 model with QLoRA enabled. Base model weights in linear layers
 that LoRA is applied to are quantized per the QLoRA paper: https://arxiv.org/abs/2305.14314.
 Please see `lora_gemma3_27b` for full API arguments.
 """
-

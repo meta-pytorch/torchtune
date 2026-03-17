@@ -745,6 +745,29 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                     dim=self._config["hidden_size"],
                     head_dim=self._config.get("head_dim", None),
                 )
+            elif self._model_type == ModelType.GEMMA3:
+                from torchtune.models.gemma3._convert_weights import gemma3_tune_to_hf
+
+                if "text_config" in self._config:
+                    state_dict[training.MODEL_KEY] = gemma3_tune_to_hf(
+                        state_dict[training.MODEL_KEY],
+                        num_heads=self._config["text_config"].get(
+                            "num_attention_heads", 8
+                        ),
+                        num_kv_heads=self._config["text_config"].get(
+                            "num_key_value_heads", 4
+                        ),
+                        dim=self._config["text_config"].get("hidden_size", 2560),
+                        head_dim=self._config["text_config"].get("head_dim", 256),
+                    )
+                else:
+                    state_dict[training.MODEL_KEY] = gemma3_tune_to_hf(
+                        state_dict[training.MODEL_KEY],
+                        num_heads=self._config["num_attention_heads"],
+                        num_kv_heads=self._config["num_key_value_heads"],
+                        dim=self._config["hidden_size"],
+                        head_dim=self._config.get("head_dim", None),
+                    )
             else:
                 state_dict[training.MODEL_KEY] = convert_weights.tune_to_hf(
                     state_dict[training.MODEL_KEY],

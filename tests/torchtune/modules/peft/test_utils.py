@@ -10,6 +10,13 @@ import pytest
 import torch
 
 from torch import nn
+from torchtune.models.gemma3 import (
+    lora_gemma3,
+    lora_gemma3_12b,
+    lora_gemma3_27b,
+    qlora_gemma3_12b,
+    qlora_gemma3_27b,
+)
 from torchtune.models.llama2 import llama2, lora_llama2
 from torchtune.modules.peft import (
     AdapterModule,
@@ -134,6 +141,23 @@ def dora_llama2_model():
 
 
 @pytest.fixture
+def lora_gemma3_model():
+    return lora_gemma3(
+        lora_attn_modules=["q_proj", "v_proj"],
+        vocab_size=VOCAB_SIZE,
+        num_layers=N_LAYERS,
+        num_heads=NUM_HEADS,
+        head_dim=16,
+        num_kv_heads=NUM_KV_HEADS,
+        embed_dim=EMBED_DIM,
+        intermediate_dim=256,
+        max_seq_len=MAX_SEQ_LEN,
+        lora_rank=4,
+        lora_alpha=1.0,
+    )
+
+
+@pytest.fixture
 def lora_llama2_model_all_keys(lora_llama2_model):
     return lora_llama2_model.state_dict().keys()
 
@@ -176,6 +200,21 @@ def dora_llama2_expected_adapter_keys():
 
 
 @pytest.fixture
+def lora_gemma3_expected_adapter_keys():
+    keys = []
+    for i in range(N_LAYERS):
+        keys.extend(
+            [
+                f"layers.{i}.attn.q_proj.lora_a.weight",
+                f"layers.{i}.attn.q_proj.lora_b.weight",
+                f"layers.{i}.attn.v_proj.lora_a.weight",
+                f"layers.{i}.attn.v_proj.lora_b.weight",
+            ]
+        )
+    return keys
+
+
+@pytest.fixture
 def lora_llama2_expected_base_model_keys():
 
     base_model = llama2(
@@ -196,6 +235,7 @@ class TestPeftUtils:
             ("dummy_adapter_parent_model", "dummy_model_expected_adapter_keys"),
             ("lora_llama2_model", "lora_llama2_expected_adapter_keys"),
             ("dora_llama2_model", "dora_llama2_expected_adapter_keys"),
+            ("lora_gemma3_model", "lora_gemma3_expected_adapter_keys"),
         ],
     )
     def test_get_adapter_params(self, request, model_name, expected_keys):
@@ -210,6 +250,7 @@ class TestPeftUtils:
             ("dummy_adapter_parent_model", "dummy_model_expected_adapter_keys"),
             ("lora_llama2_model", "lora_llama2_expected_adapter_keys"),
             ("dora_llama2_model", "dora_llama2_expected_adapter_keys"),
+            ("lora_gemma3_model", "lora_gemma3_expected_adapter_keys"),
         ],
     )
     def test_get_adapter_state_dict(self, request, model_name, expected_keys):
@@ -217,6 +258,10 @@ class TestPeftUtils:
         adapter_state_dict = get_adapter_state_dict(model.state_dict())
         expected = request.getfixturevalue(expected_keys)
         assert set(expected) == set(adapter_state_dict.keys())
+
+    def test_gemma3_qlora_aliases_target_correct_builders(self):
+        assert qlora_gemma3_12b.func is lora_gemma3_12b
+        assert qlora_gemma3_27b.func is lora_gemma3_27b
 
     @pytest.mark.parametrize(
         "model_name, expected_trainable_keys, expected_frozen_keys",
