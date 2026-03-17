@@ -6,7 +6,7 @@
 import itertools
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
@@ -77,7 +77,7 @@ class InferenceRecipe:
     def _setup_model(
         self,
         model_cfg: DictConfig,
-        model_state_dict: Dict[str, Any],
+        model_state_dict: dict[str, Any],
     ) -> nn.Module:
         with training.set_default_dtype(self._dtype), self._device:
             model = config.instantiate(model_cfg)
@@ -101,8 +101,8 @@ class InferenceRecipe:
 
     def convert_prompt_to_tokens(
         self,
-        prompt: Dict[Role, str],
-    ) -> List[int]:
+        prompt: dict[Role, str],
+    ) -> list[int]:
         """
         Convert the prompt string to a user message with optional system messages
         and tokenize using the prompt template defined on the tokenizer.
@@ -167,7 +167,7 @@ class InferenceRecipe:
             temperature=cfg.temperature,
             top_k=cfg.top_k,
             stop_tokens=self._tokenizer.stop_tokens,
-            custom_generate_next_token=custom_generate_next_token,
+            compiled_generate_next_token=custom_generate_next_token,
         )
         generated_tokens = generated_tokens.tolist()
         t = time.perf_counter() - t0

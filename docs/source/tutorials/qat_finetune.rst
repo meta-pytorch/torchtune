@@ -148,9 +148,9 @@ After fine-tuning, we can convert the model to get an actual quantized model:
       FromIntXQuantizationAwareTrainingConfig,
   )
   from torchao.quantization import (
-      Int8DynamicActivationInt4WeightConfig,
+      Int8DynamicActivationIntxWeightConfig,
   )
-
+  from torchao.quantization.granularity import PerGroup
   # Fine-tune as before
   train_loop(prepared_model)
 
@@ -161,7 +161,7 @@ After fine-tuning, we can convert the model to get an actual quantized model:
   # post-training quantization (PTQ), which inserts quantized activation
   # and weight tensor subclasses
   quantize_(prepared_model, FromIntXQuantizationAwareTrainingConfig())
-  quantize_(prepared_model, Int8DynamicActivationInt4WeightConfig(group_size=32))
+  quantize_(prepared_model, Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(32)))
 
   converted_model = prepared_model
 

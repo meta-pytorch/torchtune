@@ -5,17 +5,17 @@
 # LICENSE file in the root directory of this source tree.
 
 import contextlib
-from typing import Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Generator, Iterable, Optional
 
 import torch
 
 from torchtune.utils import get_logger
-from torchtune.utils._device import is_npu_available
+from torchtune.utils._device import is_hpu_available, is_npu_available
 
 log = get_logger()
 
 
-PRECISION_STR_TO_DTYPE: Dict[str, torch.dtype] = {
+PRECISION_STR_TO_DTYPE: dict[str, torch.dtype] = {
     "fp16": torch.float16,
     "bf16": torch.bfloat16,
     "fp32": torch.float32,
@@ -69,7 +69,8 @@ def verify_bf16_support() -> bool:
     mps_support = torch.backends.mps.is_available() and torch.backends.mps.is_built()
     npu_support = is_npu_available and torch.npu.is_bf16_supported()
     xpu_support = torch.xpu.is_available() and torch.xpu.is_bf16_supported()
-    return cuda_support or mps_support or npu_support or xpu_support
+    hpu_support = is_hpu_available and torch.hpu.is_bf16_supported()
+    return cuda_support or mps_support or npu_support or xpu_support or hpu_support
 
 
 def get_dtype(
@@ -150,17 +151,17 @@ def set_default_dtype(dtype: torch.dtype) -> Generator[None, None, None]:
 
 
 def validate_expected_param_dtype(
-    named_params: Iterable[Tuple[str, torch.nn.Parameter]],
+    named_params: Iterable[tuple[str, torch.nn.Parameter]],
     dtype: torch.dtype,
-    exclude_param_names: Optional[List[str]] = None,
+    exclude_param_names: Optional[list[str]] = None,
 ) -> None:
     """
     Validates that all input parameters have the expected dtype.
 
     Args:
-        named_params (Iterable[Tuple[str, torch.nn.Parameter]]): Iterable of named parameters.
+        named_params (Iterable[tuple[str, torch.nn.Parameter]]): Iterable of named parameters.
         dtype (torch.dtype): Expected dtype.
-        exclude_param_names (Optional[List[str]]): Optional list of parameter names to exclude from dtype checking
+        exclude_param_names (Optional[list[str]]): Optional list of parameter names to exclude from dtype checking
 
     Raises:
         ValueError: If any parameter has a different dtype than `dtype`.

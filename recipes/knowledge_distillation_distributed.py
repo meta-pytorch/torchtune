@@ -8,7 +8,7 @@ import sys
 import time
 
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 from warnings import warn
 
 import torch
@@ -18,26 +18,26 @@ from torch import nn
 from torch.distributed import destroy_process_group, init_process_group
 
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader, DistributedSampler
+from torchdata.stateful_dataloader import StatefulDataLoader
+from torchdata.stateful_dataloader.sampler import StatefulDistributedSampler
 from torchtune import config, modules, training, utils
 from torchtune.data import padded_collate_packed, padded_collate_sft
 from torchtune.datasets import ConcatDataset
 from torchtune.modules.peft import (
-    DoRALinear,
+    AdapterModule,
     get_adapter_params,
-    get_adapter_state_dict,
     get_lora_module_names,
-    get_merged_lora_ckpt,
-    LoRALinear,
     set_trainable_params,
     validate_missing_and_unexpected_for_lora,
 )
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.training import DummyProfiler, PROFILER_KEY
+from torchtune.training.checkpointing._checkpoint_client import (
+    CheckpointClient,
+    TrainingProgress,
+)
 
 from tqdm import tqdm
-
-log = utils.get_logger("DEBUG")
 
 
 class KDRecipeDistributed(FTRecipeInterface):
@@ -116,6 +116,16 @@ class KDRecipeDistributed(FTRecipeInterface):
                 "fp16 precision is not supported in this recipe. Please use fp32 or bf16."
             )
 
+        # Set up the backend for distributed training (NCCL, GLOO, etc.)
+        self._enable_async_checkpointing = cfg.get("enable_async_checkpointing", False)
+        self.fsdp_cpu_offload = cfg.get("fsdp_cpu_offload", False)
+        self.distributed_backend = training.get_distributed_backend(
+            cfg.device,
+            offload_ops_to_cpu=self.fsdp_cpu_offload
+            or self._enable_async_checkpointing,
+        )
+        init_process_group(self.distributed_backend)
+
         self.world_size, self.rank = utils.get_world_size_and_rank()
 
         self._is_rank_zero = self.rank == 0
@@ -124,8 +134,12 @@ class KDRecipeDistributed(FTRecipeInterface):
         self._output_dir = cfg.output_dir
         self._log_every_n_steps = cfg.get("log_every_n_steps", 1)
         self._log_peak_memory_stats = cfg.get("log_peak_memory_stats", False)
+        self._logger = utils.get_logger(cfg.log_level)
 
         # training attributes
+        self._enable_async_checkpointing = cfg.get("enable_async_checkpointing", False)
+        self._checkpoint_client = CheckpointClient(cfg)
+
         self._enable_activation_checkpointing = cfg.enable_activation_checkpointing
 
         # These are public properties which are updated by the checkpoint loader
@@ -142,45 +156,27 @@ class KDRecipeDistributed(FTRecipeInterface):
         self._save_adapter_weights_only = cfg.get("save_adapter_weights_only", False)
         self._gradient_accumulation_steps = cfg.gradient_accumulation_steps
         self._kd_ratio = cfg.get("kd_ratio", 0.5)
+        self.save_every_n_steps = cfg.get("save_every_n_steps")
 
-    def load_checkpoint(self, cfg_checkpointer: DictConfig) -> Dict[str, Any]:
-        """
-        Extract the checkpoint state from file and validate. This includes the
-        base model weights. If resume_from_checkpoint is True, this also includes
-        the adapter weights and recipe state
-        """
-        self._checkpointer = config.instantiate(
-            cfg_checkpointer,
-            should_load_recipe_state=self._resume_from_checkpoint,
-        )
-        checkpoint_dict = self._checkpointer.load_checkpoint()
-
-        if self._resume_from_checkpoint:
-            if training.ADAPTER_KEY not in checkpoint_dict:
-                raise ValueError(
-                    "Adapter weights not found. Please ensure a valid adapter checkpoint is provided."
-                )
-            # _update_recipe_state will throw an exception if the recipe state is not corrctly loaded
-            # no need to check here
-            self._update_recipe_state(checkpoint_dict)
-        return checkpoint_dict
-
-    def load_teacher_checkpoint(self, cfg_checkpointer: DictConfig) -> Dict[str, Any]:
+    def load_teacher_checkpoint(self, cfg: DictConfig) -> dict[str, Any]:
         """
         Extract the teacher checkpoint state from file.
         """
         teacher_checkpointer = config.instantiate(
-            cfg_checkpointer,
+            cfg.teacher_checkpointer,
         )
-        checkpoint_dict = teacher_checkpointer.load_checkpoint()
+
+        teacher_checkpoint_client = CheckpointClient(cfg, teacher_checkpointer)
+        checkpoint_dict = teacher_checkpoint_client.load_base_checkpoint()
         return checkpoint_dict
 
-    def _update_recipe_state(self, ckpt_dict: Dict[str, Any]) -> None:
+    def _update_recipe_state(self, ckpt_dict: dict[str, Any]) -> None:
         """
         Updates the recipe state from checkpoint.
         """
         try:
             self.epochs_run = ckpt_dict[training.EPOCHS_KEY]
+            self.global_step = ckpt_dict[training.STEPS_KEY]
 
             # on mismatch, warn the user and prevent the override
             if self.seed != ckpt_dict[training.SEED_KEY]:
@@ -227,10 +223,8 @@ class KDRecipeDistributed(FTRecipeInterface):
             self._metric_logger.log_config(cfg)
 
         self._compile = cfg.get("compile", False)
-        checkpoint_dict = self.load_checkpoint(cfg_checkpointer=cfg.checkpointer)
-        teacher_checkpoint_dict = self.load_teacher_checkpoint(
-            cfg_checkpointer=cfg.teacher_checkpointer
-        )
+        checkpoint_dict = self._checkpoint_client.load_base_checkpoint()
+        teacher_checkpoint_dict = self.load_teacher_checkpoint(cfg=cfg)
 
         # set up model
         self._model = self._setup_model(
@@ -241,7 +235,7 @@ class KDRecipeDistributed(FTRecipeInterface):
             base_model_state_dict=checkpoint_dict[training.MODEL_KEY],
             lora_weights_state_dict=(
                 checkpoint_dict[training.ADAPTER_KEY]
-                if self._resume_from_checkpoint
+                if training.ADAPTER_KEY in checkpoint_dict
                 else None
             ),
         )
@@ -255,16 +249,36 @@ class KDRecipeDistributed(FTRecipeInterface):
         )
 
         self._tokenizer = config.instantiate(cfg.tokenizer)
-        utils.log_rank_zero(log, "Tokenizer is initialized from file.")
+        utils.log_rank_zero(self._logger, "Tokenizer is initialized from file.")
 
         self._optimizer = self._setup_optimizer(
             cfg_optimizer=cfg.optimizer,
             opt_state_dict=(
                 checkpoint_dict[training.OPT_KEY]
-                if self._resume_from_checkpoint
+                if training.OPT_KEY in checkpoint_dict
                 else None
             ),
         )
+
+        if self._resume_from_checkpoint:
+            # If async checkpointing is enabled, intermediate checkpoints are saved asynchronously
+            # using the DistributedCheckpointer.
+            # Therefore the recipe needs to load the distributed checkpoint to restore the training
+            # progress.
+            if self._enable_async_checkpointing:
+                checkpoint_dict = self._checkpoint_client.load_distributed_checkpoint(
+                    self._model,
+                    self._optimizer,
+                    self._adapter_config,
+                )
+
+            if training.ADAPTER_KEY not in checkpoint_dict:
+                raise ValueError(
+                    "Adapter weights not found. Please ensure a valid adapter checkpoint is provided."
+                )
+
+            # Update the recipe state from the checkpoint state dict.
+            self._update_recipe_state(checkpoint_dict)
 
         # initialize loss
         self._loss_fn = config.instantiate(cfg.loss)
@@ -285,15 +299,20 @@ class KDRecipeDistributed(FTRecipeInterface):
             assert (
                 self._loss_fn.num_output_chunks == self._kd_loss_fn.num_output_chunks
             ), "Number of output chunks for loss_fn and kd_loss_fn must be the same."
+        elif getattr(self._loss_fn, "linear_projection", False):
+            raise ValueError(
+                "Linear losses are not supported yet for KD. Please use the deprecated CEWithChunkedOutputLoss."
+            )
 
-        utils.log_rank_zero(log, "Loss is initialized.")
+        utils.log_rank_zero(self._logger, "Loss is initialized.")
 
         # Dataloader depends on the tokenizer and loss_fn and should be
         # setup after all of these are setup
-        self._sampler, self._dataloader = self._setup_data(
+        self._dataloader = self._setup_data(
             cfg_dataset=cfg.dataset,
             shuffle=cfg.shuffle,
             batch_size=cfg.batch_size,
+            dataloader_state_dict=checkpoint_dict.get(training.DATALOADER_KEY, None),
         )
 
         # Finally update the recipe state which can only be correctly set after all of the
@@ -313,6 +332,18 @@ class KDRecipeDistributed(FTRecipeInterface):
             self._steps_per_epoch = self.max_steps_per_epoch
             self.global_step = self.epochs_run * self._steps_per_epoch
 
+        if self.save_every_n_steps is None:
+            self.save_every_n_steps = self._steps_per_epoch
+            self.checkpoint_dir_prefix = "epoch"
+        else:
+            self.checkpoint_dir_prefix = "step"
+
+        if (
+            self._resume_from_checkpoint
+            and self.global_step % self._steps_per_epoch == 0
+        ):
+            list(self._dataloader)
+
         # Learning rate scheduler can only be set up after number of steps
         # has been computed
         self._lr_scheduler = self._setup_lr_scheduler(
@@ -325,51 +356,11 @@ class KDRecipeDistributed(FTRecipeInterface):
         # if cfg is missing profiler key or if `cfg.profiler.enabled = False`
         self._profiler = self._setup_profiler(cfg.get(PROFILER_KEY, None))
 
-        # Used to ignore labels for loss computation
-        self.ignore_labels_cache = torch.full(
-            (cfg.batch_size, 1), self._loss_fn.ignore_index, device=self._device
-        )
-
     def _setup_profiler(
         self, cfg_profiler: Optional[DictConfig] = None
     ) -> Union[torch.profiler.profile, DummyProfiler]:
         """
         Parses the `profiler` section of top-level `cfg` and sets up profiler
-
-        Args:
-            cfg_profiler (Optional[DictConfig]): ``profiler`` section of the top-level ``cfg`` (the main config passed to
-                `recipe.main`). Default None.
-
-        Returns:
-            profiler: Union[torch.profiler.profile, DummyProfiler] - DummyProfiler is a nullcontext with no-op methods
-            for `start`, `stop`, and `step` that can be used in place of `torch.profiler.profile` if profiler is not enabled such
-            that the instrumented training loop does not need to be changed profiling is disabled.
-
-        The profiler config can be provided in configs under the `profiler` key with the following layout:
-
-        .. code-block:: yaml
-            profiler:
-                enabled: bool
-
-                #Output directory of trace artifacts
-                output_dir: str
-
-            #`torch.profiler.ProfilerActivity` types to trace
-            cpu: bool
-            cuda: bool
-
-                #Trace options
-                profile_memory: bool
-                with_stack: bool
-                record_shapes: bool
-                with_flops: bool
-
-            # `torch.profiler.schedule` options:
-            # wait_steps -> wait, warmup_steps -> warmup, active_steps -> active, num_cycles -> repeat
-            wait_steps: int
-            warmup_steps: int
-            active_steps: int
-            num_cycles: int
         """
 
         # Missing profiler section in config, assume disabled
@@ -388,7 +379,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         profiler, profiler_cfg = config.instantiate(cfg_profiler)
 
         utils.log_rank_zero(
-            log, f" Profiler config after instantiation: {profiler_cfg}"
+            self._logger, f" Profiler config after instantiation: {profiler_cfg}"
         )
         if self._is_rank_zero:
             self.profiler_profile_memory = profiler_cfg.get("profile_memory", False)
@@ -405,9 +396,9 @@ class KDRecipeDistributed(FTRecipeInterface):
         enable_activation_checkpointing: bool,
         fsdp_cpu_offload: bool,
         reshard_after_forward: bool,
-        base_model_state_dict: Dict[str, Any],
-        custom_sharded_layers: Optional[List[str]] = None,
-        lora_weights_state_dict: Optional[Dict[str, Any]] = None,
+        base_model_state_dict: dict[str, Any],
+        custom_sharded_layers: Optional[list[str]] = None,
+        lora_weights_state_dict: Optional[dict[str, Any]] = None,
     ) -> nn.Module:
         """
         Model initialization has some important considerations:
@@ -423,9 +414,19 @@ class KDRecipeDistributed(FTRecipeInterface):
         self._lora_attn_modules = list(cfg_model.lora_attn_modules)
         self._apply_lora_to_mlp = cfg_model.apply_lora_to_mlp
         self._apply_lora_to_output = getattr(cfg_model, "apply_lora_to_output", False)
+        self._adapter_config = {
+            "r": self._lora_rank,
+            "lora_alpha": self._lora_alpha,
+            "target_modules": get_lora_module_names(
+                self._lora_attn_modules,
+                self._apply_lora_to_mlp,
+                self._apply_lora_to_output,
+            ),
+            "peft_type": "LORA",
+        }
 
         utils.log_rank_zero(
-            log,
+            self._logger,
             "FSDP is enabled. Instantiating model and loading checkpoint on Rank 0 ...",
         )
         init_start = time.perf_counter()
@@ -472,9 +473,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         with training.set_default_dtype(self._dtype), self._device:
             lora_device = "cpu" if fsdp_cpu_offload else self._device
             for m in model.modules():
-                if (
-                    isinstance(m, LoRALinear) or isinstance(m, DoRALinear)
-                ) and not lora_weights_state_dict:
+                if isinstance(m, AdapterModule) and not lora_weights_state_dict:
                     # lora may not be covered in state dict
                     # if finetune for the 1st time
                     m.to_empty(device=lora_device)
@@ -497,6 +496,7 @@ class KDRecipeDistributed(FTRecipeInterface):
             lora_attn_modules=self._lora_attn_modules,
             apply_lora_to_mlp=self._apply_lora_to_mlp,
             apply_lora_to_output=self._apply_lora_to_output,
+            state_dict_keys=model.state_dict().keys(),
             base_missing=base_missing,
             base_unexpected=base_unexpected,
             lora_missing=lora_missing,
@@ -506,7 +506,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         training.validate_no_params_on_meta_device(model)
 
         utils.log_rank_zero(
-            log,
+            self._logger,
             f"Instantiating student model and loading checkpoint took {time.perf_counter() - init_start:.2f} secs",
         )
         if self._is_rank_zero:
@@ -523,10 +523,10 @@ class KDRecipeDistributed(FTRecipeInterface):
     def _setup_teacher_model(
         self,
         model_cfg: DictConfig,
-        custom_sharded_layers: Optional[List[str]],
+        custom_sharded_layers: Optional[list[str]],
         fsdp_cpu_offload: bool,
         reshard_after_forward: bool,
-        model_state_dict: Dict[str, Any],
+        model_state_dict: dict[str, Any],
     ) -> nn.Module:
         """
         Model initialization for teacher model has some important considerations:
@@ -537,7 +537,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         """
 
         utils.log_rank_zero(
-            log,
+            self._logger,
             "FSDP enabled. Instantiating teacher model and loading checkpoint on Rank 0 ...",
         )
         init_start = time.perf_counter()
@@ -590,7 +590,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         training.validate_no_params_on_meta_device(model)
 
         utils.log_rank_zero(
-            log,
+            self._logger,
             f"Instantiating teacher model and loading checkpoint took {time.perf_counter() - init_start:.2f} secs",
         )
         if self._is_rank_zero:
@@ -605,7 +605,7 @@ class KDRecipeDistributed(FTRecipeInterface):
         return model
 
     def _setup_optimizer(
-        self, cfg_optimizer: DictConfig, opt_state_dict: Optional[Dict[str, Any]] = None
+        self, cfg_optimizer: DictConfig, opt_state_dict: Optional[dict[str, Any]] = None
     ) -> Optimizer:
         optimizer = config.instantiate(cfg_optimizer, self._model.parameters())
         if opt_state_dict:
@@ -616,7 +616,7 @@ class KDRecipeDistributed(FTRecipeInterface):
                 self._device,
             )
 
-        utils.log_rank_zero(log, "Optimizer is initialized.")
+        utils.log_rank_zero(self._logger, "Optimizer is initialized.")
         return optimizer
 
     def _setup_lr_scheduler(
@@ -632,7 +632,7 @@ class KDRecipeDistributed(FTRecipeInterface):
             last_epoch=last_epoch,
         )
 
-        utils.log_rank_zero(log, "Learning rate scheduler is initialized.")
+        utils.log_rank_zero(self._logger, "Learning rate scheduler is initialized.")
         return lr_scheduler
 
     def _setup_data(
@@ -640,11 +640,12 @@ class KDRecipeDistributed(FTRecipeInterface):
         cfg_dataset: DictConfig,
         shuffle: bool,
         batch_size: int,
-    ) -> Tuple[DistributedSampler, DataLoader]:
+        dataloader_state_dict: Optional[dict[str, Any]] = None,
+    ) -> StatefulDataLoader:
         """
-        All data related setup happens here. Currently this recipe only supports
-        Map-style Datasets which fit into memory and an option for random shuffling.
-        Samplers, iterable datasets, and streaming datasets are not supported.
+        All data related setup happens here. This recipe currently supports only
+        map-style datasets. If a state_dict is provided (meaning we are resuming a training run),
+        it is loaded into the dataloader.
         """
 
         if isinstance(cfg_dataset, ListConfig):
@@ -658,14 +659,14 @@ class KDRecipeDistributed(FTRecipeInterface):
             ds = config.instantiate(cfg_dataset, self._tokenizer)
             packed = cfg_dataset.get("packed", False)
 
-        sampler = DistributedSampler(
+        sampler = StatefulDistributedSampler(
             ds,
             num_replicas=self.world_size,
             rank=self.rank,
             shuffle=shuffle,
-            seed=0,
         )
-        dataloader = DataLoader(
+
+        dataloader = StatefulDataLoader(
             dataset=ds,
             batch_size=batch_size,
             sampler=sampler,
@@ -680,96 +681,43 @@ class KDRecipeDistributed(FTRecipeInterface):
                     padded_collate_packed,
                 )
             ),
+            # dropping last avoids shape issues with compile + flex attention
+            drop_last=True,
         )
 
-        utils.log_rank_zero(log, "Dataset and Sampler are initialized.")
+        if dataloader_state_dict is not None:
+            dataloader.load_state_dict(dataloader_state_dict)
 
-        return sampler, dataloader
+        utils.log_rank_zero(self._logger, "Dataset and Sampler are initialized.")
 
-    def save_checkpoint(self, epoch: int) -> None:
-        """
-        Checkpoint the state of the recipe. The constructed checkpoint state dict
-        contains the following information:
-        - Merged weights with key MODEL_KEY
-        - Adapter weights with key ADAPTER_KEY
-        - Relevant recipe state if training is not complete
-        - If the `self._save_adapter_weights_only` option is True, the checkpointer will save only the adapter weights
+        return dataloader
 
-        To correctly resume from training, the adapter weights and recipe state must be provided along with the base model weights.
-        """
-        # final dict passed onto the checkpointer
-        checkpoint_dict = {}
+    def save_checkpoint(self, epoch: int, full_tensors: bool) -> None:
+        training_progress_epoch = epoch
+        if self.global_step % self._steps_per_epoch == 0:
+            training_progress_epoch += 1
 
-        intermediate_checkpoint = epoch + 1 < self.total_epochs
-        # To prevent GPU memory from spiking during checkpoint save,
-        # we consolidate the full model and optim state dicts on CPU for rank 0
-        cpu_state_dict = training.gather_cpu_state_dict(
-            self._model,
-            self._is_rank_zero,
-            device=self._device,
+        self._checkpoint_client.save_checkpoint(
+            model=self._model,
+            optimizer=self._optimizer,
+            training_progress=TrainingProgress(
+                seed=self.seed,
+                epochs_run=training_progress_epoch,
+                total_epochs=self.total_epochs,
+                steps_run=self.global_step,
+                max_steps_per_epoch=self.max_steps_per_epoch,
+                dataloader_state_dict=self._dataloader.state_dict(),
+            ),
+            epoch=epoch,
+            full_tensors=full_tensors,
+            dir_prefix=self.checkpoint_dir_prefix,
+            adapter_config=self._adapter_config.copy(),
+            adapter_only=self._save_adapter_weights_only,
         )
-
-        if intermediate_checkpoint:
-            opt_state_dict = training.get_full_optimizer_state_dict(
-                self._model,
-                self._optimizer,
-                self._is_rank_zero,
-                device=self._device,
-            )
-        else:
-            opt_state_dict = None
-
-        # Now that we have the model and opt state dict, create the actual checkpoint
-        # to be sent to the checkpointer and ultimately written to file
-        if self._is_rank_zero:
-
-            # Filter out the adapter keys and weights from the model state dict. These will
-            # be saved separately
-            adapter_state_dict = get_adapter_state_dict(cpu_state_dict)
-            checkpoint_dict.update({training.ADAPTER_KEY: adapter_state_dict})
-
-            # merge the adapter weights and base weights to create the model checkpoint
-            merged_state_dict = get_merged_lora_ckpt(
-                cpu_state_dict,
-                rank=self._lora_rank,
-                alpha=self._lora_alpha,
-            )
-            checkpoint_dict.update({training.MODEL_KEY: merged_state_dict})
-
-            # if training is in-progress, checkpoint the optimizer state and recipe state
-            # as well
-            if intermediate_checkpoint:
-                checkpoint_dict.update(
-                    {
-                        training.OPT_KEY: opt_state_dict,
-                        training.SEED_KEY: self.seed,
-                        training.EPOCHS_KEY: self.epochs_run,
-                        training.TOTAL_EPOCHS_KEY: self.total_epochs,
-                        training.MAX_STEPS_KEY: self.max_steps_per_epoch,
-                    }
-                )
-
-            adapter_config = {
-                "r": self._lora_rank,
-                "lora_alpha": self._lora_alpha,
-                "target_modules": get_lora_module_names(
-                    self._lora_attn_modules,
-                    self._apply_lora_to_mlp,
-                    self._apply_lora_to_output,
-                ),
-                "peft_type": "LORA",
-            }
-            checkpoint_dict.update({training.ADAPTER_CONFIG: adapter_config})
-            self._checkpointer.save_checkpoint(
-                checkpoint_dict,
-                epoch=epoch,
-                intermediate_checkpoint=intermediate_checkpoint,
-                adapter_only=self._save_adapter_weights_only,
-            )
 
     def _loss_step(
-        self, batch: Dict[str, torch.Tensor]
-    ) -> (torch.Tensor, torch.Tensor):
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # Both are shape [b, s]
         tokens, labels = batch["tokens"], batch["labels"]
 
@@ -781,12 +729,6 @@ class KDRecipeDistributed(FTRecipeInterface):
         # run model
         logits = self._model(tokens, mask=mask, input_pos=input_pos)
 
-        # Shift labels to compute loss
-        # equivalent to doing labels[..., 1:] and logits[..., :-1, :]
-        # But this way we dont need to slice the logits. We just add an ignore index to labels.
-        labels = torch.hstack(
-            (labels[..., 1:], self.ignore_labels_cache[: labels.shape[0]])
-        )
         if not isinstance(logits, list):
             labels = labels.reshape(-1)
             logits = logits.reshape(-1, logits.size(-1))
@@ -828,9 +770,9 @@ class KDRecipeDistributed(FTRecipeInterface):
         for curr_epoch in range(self.epochs_run, self.total_epochs):
             # Update the sampler to ensure data is correctly shuffled across epochs
             # in case shuffle is True
-            self._sampler.set_epoch(curr_epoch)
 
             pbar = tqdm(total=self._steps_per_epoch, disable=not (self.rank == 0))
+            self._dataloader.sampler.set_epoch(curr_epoch)
             for idx, batch in enumerate(self._dataloader):
                 if (
                     self.max_steps_per_epoch is not None
@@ -876,16 +818,16 @@ class KDRecipeDistributed(FTRecipeInterface):
                     # Manually scale the gradients from unnormalized loss by total # of tokens
                     # We multiply by world_size to undo FSDP2 gradient normalization.
                     training.scale_grads(self._model, self.world_size / num_tokens)
-                    class_loss_to_log = running_class_loss.item() / num_tokens
-                    kd_loss_to_log = running_kd_loss.item() / num_tokens
+                    class_loss_to_log = running_class_loss.detach().item() / num_tokens
+                    kd_loss_to_log = running_kd_loss.detach().item() / num_tokens
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
                     self._lr_scheduler.step()
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
 
-                    class_loss_to_log = class_loss.item()
-                    kd_loss_to_log = kd_loss.item()
+                    class_loss_to_log = class_loss.detach().item()
+                    kd_loss_to_log = kd_loss.detach().item()
                     loss_to_log = (
                         1 - self._kd_ratio
                     ) * class_loss_to_log + self._kd_ratio * kd_loss_to_log
@@ -917,6 +859,13 @@ class KDRecipeDistributed(FTRecipeInterface):
                             step=self.global_step,
                         )
 
+                    # If not last checkpoint
+                    if (
+                        self.global_step % self.save_every_n_steps == 0
+                        and curr_epoch != self.total_epochs - 1
+                    ):
+                        self.save_checkpoint(epoch=curr_epoch, full_tensors=False)
+
                     # Reset running stats for the next step
                     running_class_loss = 0
                     running_kd_loss = 0
@@ -941,9 +890,11 @@ class KDRecipeDistributed(FTRecipeInterface):
                 self._profiler.step()
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
 
         self._profiler.stop()
+
+        # Save final non-distributed ckpt
+        self.save_checkpoint(epoch=curr_epoch, full_tensors=True)
 
     def cleanup(self) -> None:
         if self._is_rank_zero:
@@ -965,7 +916,6 @@ def recipe_main(cfg: DictConfig) -> None:
             "Distributed finetune recipe should be run via a distributed launcher."
             "If using tune CLI, please specify --nnodes 1 and --nproc_per_node [num_gpus]"
         )
-    init_process_group("cuda:nccl,cpu:gloo")
     if cfg.get("fsdp_cpu_offload", False):
         # Utilize all available CPU cores for intra-op parallelism. This provides ~2x
         # speed up when benchmarking fused AdamW on CPU

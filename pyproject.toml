@@ -35,6 +35,8 @@ dependencies = [
 
     # Multimodal
     "Pillow>=9.4.0",
+    # Pin pyarrow to avoid breaking change in v21 (see #2890)
+    "pyarrow<21.0.0",
 ]
 dynamic = ["version"]
 
@@ -61,6 +63,22 @@ dev = [
     "urllib3<2.0.0",
     "wandb",
     "expecttest",
+]
+async_rl = [
+    # We will update this to a stable release soon!
+    "torchrl @ git+https://github.com/pytorch/rl@0475cbf64de0cdf5f185a77badaa6eb241c63b0b",
+
+    # We will update this to a stable release soon!
+    "tensordict @ git+https://github.com/pytorch/tensordict@c61d045aaadf6c0625706a3670fc6a741f31f1b0",
+
+    # Regular PyPI dependencies
+    "ray",
+    "readerwriterlock",
+    "vllm==0.8.4",
+    "wandb",
+
+    # For working w/ math datasets in default config
+    "math-verify[antlr4_9_3]",
 ]
 
 [tool.setuptools.dynamic]
@@ -98,3 +116,6 @@ addopts = ["--showlocals", "--import-mode=prepend", "--without-integration", "--
 # --import-mode=prepend will add the root (the parent dir of torchtune/, tests/, recipes/)
 # to `sys.path` when invoking pytest, allowing us to treat `tests` as a package within the tests.
 # --without-integration and --without-slow-integration: default to running unit tests only
+
+[tool.ruff.lint]
+select = ["UP006"]

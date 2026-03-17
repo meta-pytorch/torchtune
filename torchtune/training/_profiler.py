@@ -10,7 +10,7 @@ import os
 import time
 from functools import partial
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.distributed
@@ -103,7 +103,7 @@ def trace_handler(
 
     exporter = tensorboard_trace_handler(
         curr_trace_dir,
-        worker_name=f"r0-{now.year}-{now.month}-{now.day}-{now.hour}-{now.minute}",
+        worker_name=f"r{rank}-{now.year}-{now.month}-{now.day}-{now.hour}-{now.minute}",
         use_gzip=True,
     )
     exporter(prof)
@@ -114,13 +114,6 @@ def trace_handler(
     # Memory timeline sometimes fails to export
     if prof.profile_memory and torch.cuda.is_available():
         if rank == 0:
-            try:
-                prof.export_memory_timeline(
-                    f"{curr_trace_dir}/rank{rank}_memory-timeline.html"
-                )
-            except Exception as e:
-                log.warn(f" Failed to export memory timeline: {e}")
-
             torch.cuda.memory._dump_snapshot(
                 f"{curr_trace_dir}/rank{rank}_memory_snapshot.pickle"
             )
@@ -187,6 +180,7 @@ def setup_torch_profiler(
     cpu: bool = True,
     cuda: bool = True,
     xpu: bool = True,
+    hpu: bool = False,
     profile_memory: bool = DEFAULT_TRACE_OPTS["profile_memory"],
     with_stack: bool = DEFAULT_TRACE_OPTS["with_stack"],
     record_shapes: bool = DEFAULT_TRACE_OPTS["record_shapes"],
@@ -198,7 +192,7 @@ def setup_torch_profiler(
     active_steps: Optional[int] = None,
     num_cycles: Optional[int] = None,
     output_dir: Optional[str] = None,
-) -> Tuple[torch.profiler.profile, DictConfig]:
+) -> tuple[torch.profiler.profile, DictConfig]:
     """
     Sets up :class:`~torch.profiler.profile` and returns the profiler config with post-setup updates.
 
@@ -255,6 +249,7 @@ def setup_torch_profiler(
         cpu (bool): Enable cpu profiling. Default is True.
         cuda (bool): Enable cuda profiling. Default is True.
         xpu (bool): Enable xpu profiling. Default is True.
+        hpu (bool): Enable hpu profiling. Default is False.
         profile_memory (bool): Profile memory usage. Default is False.
         with_stack (bool): Profile stack. Default is False.
         record_shapes (bool): Record shapes. Default is True.
@@ -266,7 +261,7 @@ def setup_torch_profiler(
         output_dir (Optional[str]): Tracing file output path.
 
     Returns:
-        Tuple[torch.profiler.profile, DictConfig]
+        tuple[torch.profiler.profile, DictConfig]
     """
 
     if not enabled:
@@ -281,6 +276,8 @@ def setup_torch_profiler(
         activities.append(torch.profiler.ProfilerActivity.CUDA)
     if xpu:
         activities.append(torch.profiler.ProfilerActivity.XPU)
+    if hpu:
+        activities.append(torch.profiler.ProfilerActivity.HPU)
     if len(activities) == 0:
         _warn("No activities specified, defaulting to CPU + CUDA")
         activities = DEFAULT_PROFILER_ACTIVITIES
@@ -378,6 +375,7 @@ def setup_torch_profiler(
             "cpu": cpu,
             "cuda": cuda,
             "xpu": xpu,
+            "hpu": hpu,
             "profile_memory": profile_memory,
             "with_stack": with_stack,
             "record_shapes": record_shapes,

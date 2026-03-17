@@ -266,6 +266,61 @@ for testing or for loading quantized models for generation.
 
 |
 
+:class:`DistributedCheckpointer <torchtune.training.DistributedCheckpointer>`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This checkpointer reads and writes checkpoints in a distributed format using Pytorch Distributed Checkpointing (DCP).
+The output format is DCP's default format, which saves the state dict across all ranks, as seperate files for each rank. This differs
+from the other checkpointer implementations, which consolidate to rank-0 and then save the state dict as full tensors.
+The distributed checkpointer is enabled when enabling asynchronous checkpointing during training and uses DCP's async_save API.
+Async distributed checkpointing is only used for intermediate checkpoints.
+
+When asynchronous checkpointing is enabled, intermediate checkpoints are saved using the DistributedCheckpointer
+without blocking the training process. This is particularly useful for large models where saving checkpoints
+can take significant time.
+
+**Key Features:**
+
+- **Asynchronous Saving**: Allows training to continue while checkpoints are being saved in the background
+- **Distributed-Aware**: Designed to work seamlessly in multi-GPU and multi-node training setups
+
+**Configuration Example:**
+
+To enable asynchronous checkpointing in your training config, you need to set the ``enable_async_checkpointing``
+flag to ``True``. The DistributedCheckpointer will be automatically used when this flag is enabled.
+
+.. code-block:: yaml
+
+    checkpointer:
+        # checkpointer to use for final checkpoints
+        _component_: torchtune.training.FullModelHFCheckpointer
+
+    # Set to True to enable asynchronous distributed checkpointing for intermediate checkpoints
+    enable_async_checkpointing: True
+
+**Resuming Training with DistributedCheckpointer:**
+
+If your training was interrupted and you had async checkpointing enabled, you can resume from the latest
+distributed checkpoint by setting both ``resume_from_checkpoint`` and ``enable_async_checkpointing`` to ``True``:
+
+.. code-block:: yaml
+
+    # Set to True to resume from checkpoint
+    resume_from_checkpoint: True
+
+    # Set to True to enable asynchronous checkpointing
+    enable_async_checkpointing: True
+
+The DistributedCheckpointer will automatically locate and load the latest intermediate checkpoint from the
+output directory.
+
+.. note::
+
+    The final checkpoint at the end of training is always saved synchronously to ensure all
+    data is properly persisted in safetensors or torch.save format before the training job completes.
+
+|
+
 Checkpoint Output
 ---------------------------------
 
@@ -402,6 +457,8 @@ to look for it in the output_dir.
 .. code-block:: yaml
 
     checkpointer:
+        # [... rest of the config...]
+
         # checkpoint files. Note that you will need to update this
         # section of the config with the intermediate checkpoint files
         checkpoint_files: [
@@ -417,16 +474,18 @@ Resuming from checkpoint - LoRA Finetuning
 ------------------------------------------
 
 Similarly to full finetuning, we will also only need to modify two fields: ``resume_from_checkpoint``
-and ``adapter_checkpoint``, which will be loaded from output_dir. We do not have to modify ``checkpoint_files``,
-because the base model being loaded is still the same.
+and ``adapter_checkpoint``, which will be loaded from ``output_dir``. We do NOT have to modify ``checkpoint_files``,
+because the base model being loaded is still the same. You can optionally leave ``adapter_checkpoint`` empty.
+In this case, we will look for it in the last saved epoch folder.
 
 .. code-block:: yaml
 
     checkpointer:
+        # [... rest of the config...]
 
-        # adapter_checkpoint. Note that you will need to update this
-        # section of the config with the intermediate checkpoint files
-        adapter_checkpoint: epoch_{YOUR_EPOCH}/adapter_model.safetensors
+        # adapter_checkpoint. You will need to update this with the intermediate checkpoint files.
+        # It can be empty if resuming from last epoch.
+        adapter_checkpoint: epoch_{YOUR_EPOCH}/adapter_model.pt
 
     # set to True if restarting training
     resume_from_checkpoint: True

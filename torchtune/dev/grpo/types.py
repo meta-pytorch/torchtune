@@ -4,7 +4,8 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import NamedTuple
+
+from typing import NamedTuple, Optional
 
 import torch
 
@@ -17,25 +18,23 @@ class GRPOTrajectory(NamedTuple):
         query_responses (torch.Tensor): (query, response) pairs with shape [B x G, P+L].
         logprobs (torch.Tensor): Log probabilities of the generated responses with shape [B x G, L].
         ref_logprobs (torch.Tensor): Log probabilities of the generated responses using the reference policy with shape [B x G, L].
-        rewards (torch.Tensor): Rewards obtained from the environment or reward model with shape [B x G].
-        successes (torch.Tensor): Success indicators for each trajectory.
         advantages (torch.Tensor): Advantage estimates for the generated responses with shape [B x G].
         masks (torch.Tensor): Attention masks for input ids-generated responses pairs with shape [B x G, P+L, P+L].
         position_ids (torch.Tensor): Position IDs for input ids-generated responses pairs with shape [B x G, P+L].
         response_padding_masks (torch.Tensor): Padding masks for the truncated and padded generated responses with shape [B x G, L].
         seq_lens (torch.Tensor): Sequence lengths of truncated generated responses.
+        answers (str): list of answers for the generated responses. [B x G]
     """
 
-    query_responses: torch.Tensor  # [B x G, P+L]
-    logprobs: torch.Tensor  # [B x G, L]
-    ref_logprobs: torch.Tensor  # [B x G, L]
-    rewards: torch.Tensor  # [B x G]
-    successes: torch.Tensor
-    advantages: torch.Tensor  # [B x G]
-    masks: torch.Tensor  # [B x G, P+L, P+L]
-    position_ids: torch.Tensor  # [B x G, P+L]
-    response_padding_masks: torch.Tensor  # [B x G, L]
-    seq_lens: torch.Tensor
+    query_responses: torch.Tensor = None  # [B x G, P+L]
+    logprobs: torch.Tensor = None  # [B x G, L]
+    ref_logprobs: torch.Tensor = None  # [B x G, L]
+    advantages: torch.Tensor = None  # [B x G]
+    masks: torch.Tensor = None  # [B x G, P+L, P+L]
+    position_ids: torch.Tensor = None  # [B x G, P+L]
+    response_padding_masks: torch.Tensor = None  # [B x G, L]
+    seq_lens: torch.Tensor = None
+    answers: str = None
 
 
 class GRPOStats(NamedTuple):
@@ -49,6 +48,7 @@ class GRPOStats(NamedTuple):
         ratios (torch.Tensor): The ratio between the current and old policy probabilities.
         clipfrac (torch.Tensor): The fraction of ratios that were clipped.
         approx_policy_kls (torch.Tensor): Average estimated KL divergence between the policy before and after the optimization step.
+        metadata (Optional[dict]): Additional metadata to be logged.
     """
 
     loss: torch.Tensor
@@ -57,3 +57,4 @@ class GRPOStats(NamedTuple):
     ratios: torch.Tensor
     clipfrac: torch.Tensor
     approx_policy_kls: torch.Tensor
+    metadata: Optional[dict] = None

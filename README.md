@@ -4,18 +4,20 @@
 # torchtune
 
 [![Unit Test](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml/badge.svg?branch=main)](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml)
-![Recipe Integration Test](https://github.com/pytorch/torchtune/actions/workflows/recipe_test.yaml/badge.svg)
+![Integration Tests](https://github.com/pytorch/torchtune/actions/workflows/gpu_test.yaml/badge.svg)
 [![](https://dcbadge.vercel.app/api/server/4Xsdn8Rr9Q?style=flat)](https://discord.gg/4Xsdn8Rr9Q)
 
 [**Overview**](#overview-) | [**Installation**](#installation-%EF%B8%8F) | [**Get Started**](#get-started-) |  [**Documentation**](https://pytorch.org/torchtune/main/index.html) | [**Community**](#community-) | [**Citing torchtune**](#citing-torchtune-) | [**License**](#license)
 
 ### 📣 Recent updates 📣
+* *May 2025*: torchtune has added support for *Qwen3* models! Check out all the configs [here](recipes/configs/qwen3)
+* *April 2025*: **Llama4** is now available in torchtune! Try out our full and LoRA finetuning configs [here](recipes/configs/llama4)
 * *February 2025*: Multi-node training is officially [open for business in torchtune](https://pytorch.org/torchtune/main/tutorials/multinode.html)! Full finetune on multiple nodes to take advantage of larger batch sizes and models.
-* *December 2024*: torchtune now supports **Llama 3.3 70B**! Try it out by following our installation instructions [here](#Installation), then run any of the configs [here](recipes/configs/llama3_3).
+* *December 2024*: torchtune now supports **Llama 3.3 70B**! Try it out by following our installation instructions [here](#installation-%EF%B8%8F), then run any of the configs [here](recipes/configs/llama3_3).
 * *November 2024*: torchtune has released [v0.4.0](https://github.com/pytorch/torchtune/releases/tag/v0.4.0) which includes stable support for exciting features like activation offloading and multimodal QLoRA
 * *November 2024*: torchtune has added [Gemma2](recipes/configs/gemma2) to its models!
 * *October 2024*: torchtune added support for Qwen2.5 models - find the configs [here](recipes/configs/qwen2_5/)
-* *September 2024*: torchtune has support for **Llama 3.2 11B Vision**, **Llama 3.2 3B**, and **Llama 3.2 1B** models! Try them out by following our installation instructions [here](#Installation), then run any of the text configs [here](recipes/configs/llama3_2) or vision configs [here](recipes/configs/llama3_2_vision).
+* *September 2024*: torchtune has support for **Llama 3.2 11B Vision**, **Llama 3.2 3B**, and **Llama 3.2 1B** models! Try them out by following our installation instructions [here](#installation-%EF%B8%8F), then run any of the text configs [here](recipes/configs/llama3_2) or vision configs [here](recipes/configs/llama3_2_vision).
 
 
 &nbsp;
@@ -25,9 +27,9 @@
 
 torchtune is a PyTorch library for easily authoring, post-training, and experimenting with LLMs. It provides:
 
-- Hackable training recipes for SFT, knowledge distillation, RL and RLHF, and quantization-aware training
+- Hackable training recipes for SFT, knowledge distillation, DPO, PPO, GRPO, and quantization-aware training
 - Simple PyTorch implementations of popular LLMs like Llama, Gemma, Mistral, Phi, Qwen, and more
-- OOTB best-in-class memory efficiency, performance improvements, and scaling, utilizing the latest PyTorch APIs
+- Best-in-class memory efficiency, performance improvements, and scaling, utilizing the latest PyTorch APIs
 - YAML configs for easily configuring training, evaluation, quantization or inference recipes
 
 &nbsp;
@@ -41,7 +43,7 @@ torchtune supports [the entire post-training lifecycle](https://pytorch.org/torc
 | Type of Weight Update | 1 Device | >1 Device | >1 Node |
 |-----------------------|:--------:|:---------:|:-------:|
 | Full                  |    ✅    |     ✅    |   ✅    |
-| [LoRA/QLoRA](https://pytorch.org/torchtune/stable/recipes/lora_finetune_single_device.html)            |    ✅    |     ✅    |    ❌    |
+| [LoRA/QLoRA](https://pytorch.org/torchtune/stable/recipes/lora_finetune_single_device.html)            |    ✅    |     ✅    |    ✅    |
 
 Example: ``tune run lora_finetune_single_device --config llama3_2/3B_lora_single_device`` <br />
 You can also run e.g. ``tune ls lora_finetune_single_device`` for a full list of available configs.
@@ -74,11 +76,11 @@ You can also run e.g. ``tune ls full_dpo_distributed`` for a full list of availa
 
 | Type of Weight Update | 1 Device | >1 Device | >1 Node |
 |-----------------------|:--------:|:---------:|:-------:|
-| [Full](https://pytorch.org/torchtune/stable/recipes/qat_distributed.html)                  |    ❌    |     ✅    |    ❌    |
+| [Full](https://pytorch.org/torchtune/stable/recipes/qat_distributed.html)                  |    ✅     |     ✅    |    ❌    |
 | LoRA/QLoRA            |    ❌    |     ✅    |    ❌    |
 
 Example: ``tune run qat_distributed --config llama3_1/8B_qat_lora`` <br />
-You can also run e.g. ``tune ls qat_distributed`` for a full list of available configs.
+You can also run e.g. ``tune ls qat_distributed`` or ``tune ls qat_single_device`` for a full list of available configs.
 
 The above configs are just examples to get you started. The full list of recipes can be found [here](recipes/). If you'd like to work on one of the gaps you see, please submit a PR! If there's a entirely new post-training method you'd like to see implemented in torchtune, feel free to open an Issue.
 
@@ -90,6 +92,7 @@ For the above recipes, torchtune supports many state-of-the-art models available
 
 | Model                                         | Sizes     |
 |-----------------------------------------------|-----------|
+| [Llama4](https://www.llama.com/docs/model-cards-and-prompt-formats/llama4)    | Scout (17B x 16E) [[models](torchtune/models/llama4/_model_builders.py), [configs](recipes/configs/llama4/)]        |
 | [Llama3.3](https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_3)    | 70B [[models](torchtune/models/llama3_3/_model_builders.py), [configs](recipes/configs/llama3_3/)]        |
 | [Llama3.2-Vision](https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_2#-llama-3.2-vision-models-(11b/90b)-)    | 11B, 90B [[models](torchtune/models/llama3_2_vision/_model_builders.py), [configs](recipes/configs/llama3_2_vision/)]        |
 | [Llama3.2](https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_2)    | 1B, 3B [[models](torchtune/models/llama3_2/_model_builders.py), [configs](recipes/configs/llama3_2/)]        |
@@ -98,6 +101,7 @@ For the above recipes, torchtune supports many state-of-the-art models available
 | [Gemma2](https://huggingface.co/docs/transformers/main/en/model_doc/gemma2)   | 2B, 9B, 27B [[models](torchtune/models/gemma2/_model_builders.py), [configs](recipes/configs/gemma2/)] |
 | [Microsoft Phi4](https://huggingface.co/collections/microsoft/phi-4-677e9380e514feb5577a40e4) | 14B [[models](torchtune/models/phi4/), [configs](recipes/configs/phi4/)]
 | [Microsoft Phi3](https://huggingface.co/collections/microsoft/phi-3-6626e15e9585a200d2d761e3) | Mini [[models](torchtune/models/phi3/), [configs](recipes/configs/phi3/)]
+| [Qwen3](https://qwenlm.github.io/blog/qwen3/) | 0.6B, 1.7B, 4B, 8B, 14B, 32B [[models](torchtune/models/qwen3/), [configs](recipes/configs/qwen3/)]
 | [Qwen2.5](https://qwenlm.github.io/blog/qwen2.5/) | 0.5B, 1.5B, 3B, 7B, 14B, 32B, 72B [[models](torchtune/models/qwen2_5/), [configs](recipes/configs/qwen2_5/)]
 | [Qwen2](https://qwenlm.github.io/blog/qwen2/) | 0.5B, 1.5B, 7B [[models](torchtune/models/qwen2/), [configs](recipes/configs/qwen2/)]
 
@@ -176,7 +180,7 @@ batch_size=2
 ## Installation 🛠️
 
 
-torchtune is tested with the latest stable PyTorch release as well as the preview nightly version. torchtune leverages
+torchtune is **only** tested with the latest stable PyTorch release (currently 2.6.0) as well as the preview nightly version, and leverages
 torchvision for finetuning multimodal LLMs and torchao for the latest in quantization techniques; you should install these as well.
 
 ### Install stable release
@@ -190,8 +194,8 @@ pip install torchtune
 ### Install nightly release
 
 ```bash
-# Install PyTorch, torchvision, torchao nightlies
-pip install --pre --upgrade torch torchvision torchao --index-url https://download.pytorch.org/whl/nightly/cu126 # full options are cpu/cu118/cu121/cu124/cu126
+# Install PyTorch, torchvision, torchao nightlies.
+pip install --pre --upgrade torch torchvision torchao --index-url https://download.pytorch.org/whl/nightly/cu126 # full options are cpu/cu118/cu124/cu126/xpu/rocm6.2/rocm6.3/rocm6.4
 pip install --pre --upgrade torchtune --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 ```
 
@@ -297,6 +301,19 @@ Check out `tune --help` for all possible CLI commands and options. For more info
 
 torchtune supports finetuning on a variety of different datasets, including [instruct-style](https://pytorch.org/torchtune/main/basics/instruct_datasets.html), [chat-style](https://pytorch.org/torchtune/main/basics/chat_datasets.html), [preference datasets](https://pytorch.org/torchtune/main/basics/preference_datasets.html), and more. If you want to learn more about how to apply these components to finetune on your own custom dataset, please check out the provided links along with our [API docs](https://pytorch.org/torchtune/main/api_ref_datasets.html).
 
+### Custom Devices
+torchtune supports finetuning on a variety of devices, including NVIDIA GPU, Intel XPU, AMD ROCm, Apple MPS, and Ascend NPU. If you're interested in running recipes on a custom device, such as Intel XPU, follow the steps below.
+
+Step 1: Refer to the [Getting Started on Intel GPU guide](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html) to configure your environment.
+
+Step 2: Update device information via either CLI override or config changes.
+You can directly overwrite config fields from the command line:
+
+```bash
+tune run lora_finetune_single_device --config llama3_1/8B_lora_single_device device=xpu
+```
+Or edit your local copy of configuration files and replace `device: cuda` with `device: xpu`
+
 &nbsp;
 
 ## Community 🌍
@@ -307,7 +324,7 @@ torchtune focuses on integrating with popular tools and libraries from the ecosy
 - [EleutherAI's LM Eval Harness](https://github.com/EleutherAI/lm-evaluation-harness) for [evaluating](recipes/eleuther_eval.py) trained models
 - [Hugging Face Datasets](https://huggingface.co/docs/datasets/en/index) for [access](torchtune/datasets/_instruct.py) to training and evaluation datasets
 - [PyTorch FSDP2](https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md) for distributed training
-- [torchao](https://github.com/pytorch-labs/ao) for lower precision dtypes and [post-training quantization](recipes/quantize.py) techniques
+- [torchao](https://github.com/pytorch/ao) for lower precision dtypes and [post-training quantization](recipes/quantize.py) techniques
 - [Weights & Biases](https://wandb.ai/site) for [logging](https://pytorch.org/torchtune/main/deep_dives/wandb_logging.html) metrics and checkpoints, and tracking training progress
 - [Comet](https://www.comet.com/site/) as another option for [logging](https://pytorch.org/torchtune/main/deep_dives/comet_logging.html)
 - [ExecuTorch](https://pytorch.org/executorch-overview) for [on-device inference](https://github.com/pytorch/executorch/tree/main/examples/models/llama2#optional-finetuning) using finetuned models
@@ -334,7 +351,7 @@ We really value our community and the contributions made by our wonderful users.
 The transformer code in this repository is inspired by the original [Llama2 code](https://github.com/meta-llama/llama/blob/main/llama/model.py). We also want to give a huge shout-out to EleutherAI, Hugging Face and
 Weights & Biases for being wonderful collaborators and for working with us on some of these integrations within torchtune. In addition, we want to acknowledge some other awesome libraries and tools from the ecosystem:
 
-- [gpt-fast](https://github.com/pytorch-labs/gpt-fast) for performant LLM inference techniques which we've adopted out-of-the-box
+- [gpt-fast](https://github.com/meta-pytorch/gpt-fast) for performant LLM inference techniques which we've adopted out-of-the-box
 - [llama recipes](https://github.com/meta-llama/llama-recipes) for spring-boarding the llama2 community
 - [bitsandbytes](https://github.com/TimDettmers/bitsandbytes) for bringing several memory and performance based techniques to the PyTorch ecosystem
 - [@winglian](https://github.com/winglian/) and [axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) for early feedback and brainstorming on torchtune's design and feature set.

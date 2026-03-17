@@ -15,7 +15,6 @@ from torchao.dtypes.nf4tensor import NF4Tensor, to_nf4
 from torchtune import training
 from torchtune.modules.common_utils import reparametrize_as_dtype_state_dict_post_hook
 from torchtune.modules.peft import LoRALinear, QATLoRALinear
-from torchtune.training.quantization import _torchao_0_7_supported
 from torchtune.training.seed import set_seed
 
 
@@ -237,11 +236,17 @@ class TestLoRALinear:
             lora_linear.weight.quantized_data, lora_linear_reload.weight.quantized_data
         )
 
-    @pytest.mark.skipif(not _torchao_0_7_supported, reason="needs torchao 0.7+")
     def test_qat_lora_forward(self, inputs, lora_linear, out_dim) -> None:
-        lora_linear = lora_linear(use_bias=True, dtype=torch.float32)
+        lora_linear = lora_linear(use_bias=False, dtype=torch.float32)
         qat_lora_linear = QATLoRALinear.from_lora_linear(lora_linear)
         expected = torch.tensor(QAT_EXPECTED_VAL)
         actual = qat_lora_linear(inputs)
         assert actual.shape == (BSZ, SEQ_LEN, out_dim)
         torch.testing.assert_close(actual.mean(), expected, atol=1e-4, rtol=1e-6)
+
+    def test_qat_lora_with_bias_raises_error(self, lora_linear) -> None:
+        lora_linear_with_bias = lora_linear(use_bias=True, dtype=torch.float32)
+        with pytest.raises(
+            ValueError, match="Bias is not supported in QAT \\+ LoRA yet"
+        ):
+            QATLoRALinear.from_lora_linear(lora_linear_with_bias)

@@ -1524,4 +1524,3 @@ class DistributedCheckpointer(_CheckpointerInterface):
             )
 
         # TODO: prune old checkpoints
-        

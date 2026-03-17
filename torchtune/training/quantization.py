@@ -7,44 +7,29 @@
 from typing import Callable, Optional
 
 from torch import nn
-from torchtune.modules.peft.lora import LoRALinear, QATLoRALinear
+from torch.distributed.tensor.parallel.style import ParallelStyle
 
-
-try:
-    # torchao 0.7+
-    from torchao.dtypes import TensorCoreTiledLayout
-except ImportError:
-    # torchao 0.6 and before
-    from torchao.dtypes import TensorCoreTiledLayoutType as TensorCoreTiledLayout
-
+from torchao.dtypes import TensorCoreTiledLayout
+from torchao.float8 import (
+    convert_to_float8_training as _convert_to_float8_training_torchao,
+    Float8LinearConfig,
+)
+from torchao.float8.float8_tensor_parallel import (
+    Float8ColwiseParallel,
+    Float8RowwiseParallel,
+)
 from torchao.quantization import (
-    int4_weight_only,
-    int8_dynamic_activation_int4_weight,
+    Int4WeightOnlyConfig,
+    Int8DynamicActivationIntxWeightConfig,
     quantize_,
 )
+from torchao.quantization.qat import (
+    Int4WeightOnlyQATQuantizer,
+    Int8DynActInt4WeightQATQuantizer,
+)
+from torchao.quantization.granularity import PerGroup
 
-try:
-    # torchao 0.7+
-    from torchao.quantization.qat import (
-        Int4WeightOnlyQATQuantizer,
-        Int8DynActInt4WeightQATQuantizer,
-    )
-    from torchao.quantization.qat.linear import (
-        disable_4w_fake_quant,
-        disable_8da4w_fake_quant,
-        enable_4w_fake_quant,
-        enable_8da4w_fake_quant,
-    )
-except ImportError:
-    # torchao 0.6 and before
-    from torchao.quantization.prototype.qat import (
-        disable_4w_fake_quant,
-        disable_8da4w_fake_quant,
-        enable_4w_fake_quant,
-        enable_8da4w_fake_quant,
-        Int4WeightOnlyQATQuantizer,
-        Int8DynActInt4WeightQATQuantizer,
-    )
+from torchtune.modules.peft.lora import LoRALinear, QATLoRALinear
 
 
 __all__ = [
@@ -58,15 +43,32 @@ __all__ = [
 ]
 
 
-_torchao_0_7_supported = True
 try:
     from torchao.quantization import qat  # noqa: F401
-except ImportError:
-    _torchao_0_7_supported = False
+except ImportError as e:
+    raise ValueError("Need torchao version 0.7.0+") from e
 
 _quantizer_to_mode = {}
 _quantizer_mode_to_disable_fake_quant = {}
 _quantizer_mode_to_enable_fake_quant = {}
+
+
+def _enable_linear_fake_quant(
+    mod: nn.Module,
+    enabled: bool = True,
+):
+    """
+    Helper function to enable fake quantization in `FakeQuantizedLinear`.
+    """
+    if isinstance(mod, FakeQuantizedLinear):
+        if mod.activation_fake_quantizer is not None:
+            mod.activation_fake_quantizer.enabled = enabled
+        if mod.weight_fake_quantizer is not None:
+            mod.weight_fake_quantizer.enabled = enabled
+
+
+def _disable_linear_fake_quant(mod: nn.Module):
+    _enable_linear_fake_quant(mod, enabled=False)
 
 
 # ========================================
@@ -84,15 +86,15 @@ class Int8DynActInt4WeightQuantizer:
         self.groupsize = groupsize
 
     def quantize(self, model):
-        quantize_fn = int8_dynamic_activation_int4_weight(self.groupsize)
+        quantize_fn = Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(self.groupsize))
         quantize_(model, quantize_fn)
         return model
 
 
 _quantizer_to_mode[Int8DynActInt4WeightQuantizer] = "8da4w"
 _quantizer_to_mode[Int8DynActInt4WeightQATQuantizer] = "8da4w-qat"
-_quantizer_mode_to_disable_fake_quant["8da4w-qat"] = disable_8da4w_fake_quant
-_quantizer_mode_to_enable_fake_quant["8da4w-qat"] = enable_8da4w_fake_quant
+_quantizer_mode_to_disable_fake_quant["8da4w-qat"] = _disable_linear_fake_quant
+_quantizer_mode_to_enable_fake_quant["8da4w-qat"] = _enable_linear_fake_quant
 
 
 # ==================
@@ -112,15 +114,15 @@ class Int4WeightOnlyQuantizer:
 
     def quantize(self, model):
         layout_type = TensorCoreTiledLayout(self.inner_k_tiles)
-        quantize_fn = int4_weight_only(self.groupsize, layout_type)
+        quantize_fn = Int4WeightOnlyConfig(self.groupsize, layout_type)
         quantize_(model, quantize_fn)
         return model
 
 
 _quantizer_to_mode[Int4WeightOnlyQuantizer] = "4w"
 _quantizer_to_mode[Int4WeightOnlyQATQuantizer] = "4w-qat"
-_quantizer_mode_to_disable_fake_quant["4w-qat"] = disable_4w_fake_quant
-_quantizer_mode_to_enable_fake_quant["4w-qat"] = enable_4w_fake_quant
+_quantizer_mode_to_disable_fake_quant["4w-qat"] = _disable_linear_fake_quant
+_quantizer_mode_to_enable_fake_quant["4w-qat"] = _enable_linear_fake_quant
 
 
 # ====================== #
@@ -133,8 +135,8 @@ class Int4WeightOnlyQATQuantizerModuleSwap(Int4WeightOnlyQATQuantizer):
     pass
 
 
-disable_4w_fake_quant_module_swap = disable_4w_fake_quant
-enable_4w_fake_quant_module_swap = enable_4w_fake_quant
+disable_4w_fake_quant_module_swap = _disable_linear_fake_quant
+enable_4w_fake_quant_module_swap = _enable_linear_fake_quant
 _quantizer_to_mode[Int4WeightOnlyQATQuantizerModuleSwap] = "4w-qat-module-swap"
 _quantizer_mode_to_disable_fake_quant[
     "4w-qat-module-swap"
@@ -149,8 +151,8 @@ class Int8DynActInt4WeightQATQuantizerModuleSwap(Int8DynActInt4WeightQATQuantize
     pass
 
 
-disable_8da4w_fake_quant_module_swap = disable_8da4w_fake_quant
-enable_8da4w_fake_quant_module_swap = enable_8da4w_fake_quant
+disable_8da4w_fake_quant_module_swap = _disable_linear_fake_quant
+enable_8da4w_fake_quant_module_swap = _enable_linear_fake_quant
 _quantizer_to_mode[Int8DynActInt4WeightQATQuantizerModuleSwap] = "8da4w-qat-module-swap"
 _quantizer_mode_to_disable_fake_quant[
     "8da4w-qat-module-swap"
@@ -238,3 +240,61 @@ def swap_lora_linear_with_qat(
                 activation_qat_config,
                 weight_qat_config,
             )
+
+
+def convert_to_float8_training(
+    model: nn.Module,
+    fp8_recipe_name: Optional[str] = None,
+) -> nn.Module:
+    """
+    Prepare the model for float8 training by swapping all `nn.Linear` with `Float8Linear`.
+
+    Args:
+        model (nn.Module): The model to swap linear layers on
+        fp8_recipe_name (Optional[str]): name to identify one of the pre-made recipes,
+            one of "tensorwise", "rowwise", and "rowwise_with_gw_hp". If not specified,
+            defaults to "tensorwise" with "enable_fsdp_float8_all_gather=True". See
+            https://github.com/pytorch/ao/blob/v0.9.0/torchao/float8/config.py#L150
+            for more details.
+
+    Returns:
+        (nn.Module) The new model with `Float8Linear`.
+    """
+    if fp8_recipe_name is not None:
+        fp8_config = Float8LinearConfig.from_recipe_name(fp8_recipe_name)
+    else:
+        fp8_config = Float8LinearConfig(enable_fsdp_float8_all_gather=True)
+    return _convert_to_float8_training_torchao(
+        model,
+        config=fp8_config,
+        module_filter_fn=lambda mod, fqn: fqn != "output",
+    )
+
+
+# TODO: validate this in full_finetune_distributed recipe once FP8 + TP is enabled
+def _validate_float8_tp_plan(
+    tp_plan: Optional[dict[str, ParallelStyle]],
+    fp8_recipe_name: Optional[str] = None,
+) -> None:
+    """
+    Validate that the provided tensor parallel plan is compatible with the
+    float8 settings. Specifically, float8 tensor parallel plans are only
+    supported when using 'tensorwise' float8 recipes.
+    """
+    if tp_plan is None or is_fp8_tensorwise_scaling(fp8_recipe_name):
+        return
+    for parallel_style in tp_plan.values():
+        if isinstance(parallel_style, Float8ColwiseParallel) or isinstance(
+            parallel_style, Float8RowwiseParallel
+        ):
+            raise ValueError(
+                "%s and %s are only compatible with 'tensorwise' float8 recipes"
+                % (Float8ColwiseParallel.__name__, Float8RowwiseParallel.__name__)
+            )
+
+
+def is_fp8_tensorwise_scaling(fp8_recipe_name: Optional[str]):
+    """
+    Return True if the fp8 recipe name refers to 'tensorwwise' scaling.
+    """
+    return fp8_recipe_name is None or fp8_recipe_name == "tensorwise"

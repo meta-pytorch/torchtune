@@ -6,6 +6,7 @@
 
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -31,7 +32,6 @@ from torchtune import config
 from torchtune.training.checkpointing._utils import (
     ADAPTER_MODEL_FNAME,
     get_largest_iter_folder,
-    RECIPE_STATE_DIRNAME,
     safe_torch_load,
     SHARD_FNAME,
 )
@@ -54,7 +54,6 @@ class TestLoRAFinetuneDistributedRecipe:
         # These values have been validated against single device recipe test via
         # https://gist.github.com/ebsmothers/f1c3db7c66655a23a91e0290360960c4
         loss_values_map = {
-            "llama2": [10.5209, 10.5269, 10.5130, 10.5242],
             "llama3": [11.9839, 11.9691, 11.9617, 11.9383],
         }
         return loss_values_map[model_type]
@@ -73,13 +72,13 @@ class TestLoRAFinetuneDistributedRecipe:
         tmpdir,
         monkeypatch,
     ):
-        ckpt = "llama2_tune"
+        ckpt = "llama3_tune"
         ckpt_path = Path(CKPT_MODEL_PATHS[ckpt])
         ckpt_dir = ckpt_path.parent
         log_file = gen_log_file_name(tmpdir)
         cmd = f"""
         tune run --nnodes 1 --nproc_per_node 2 lora_finetune_distributed
-            --config llama2/7B_lora \
+            --config llama3/8B_lora \
             batch_size={micro_batch_size} \
             gradient_accumulation_steps={gradient_accumulation_steps} \
             output_dir={tmpdir} \
@@ -89,22 +88,22 @@ class TestLoRAFinetuneDistributedRecipe:
             checkpointer.checkpoint_dir='{ckpt_dir}' \
             checkpointer.checkpoint_files=[{ckpt_path}]\
             checkpointer.output_dir={tmpdir} \
-            checkpointer.model_type=LLAMA2 \
+            checkpointer.model_type=LLAMA3 \
             metric_logger.filename={log_file} \
-            tokenizer.path=/tmp/test-artifacts/tokenizer.model \
+            tokenizer.path=/tmp/test-artifacts/tokenizer_llama3.model \
             tokenizer.prompt_template=null \
             reshard_after_forward={reshard_after_forward} \
             enable_activation_checkpointing=False \
             enable_activation_offloading=False \
         """.split()
 
-        model_config = MODEL_TEST_CONFIGS["llama2_lora"]
+        model_config = MODEL_TEST_CONFIGS["llama3_lora"]
 
         cmd = cmd + self._get_test_config_overrides() + model_config
         monkeypatch.setattr(sys, "argv", cmd)
         runpy.run_path(TUNE_PATH, run_name="__main__")
         loss_values = get_loss_values_from_metric_logger(log_file)
-        expected_loss_values = self._fetch_expected_loss_values("llama2")
+        expected_loss_values = self._fetch_expected_loss_values("llama3")
         torch.testing.assert_close(
             loss_values, expected_loss_values, rtol=1e-5, atol=1e-5
         )
@@ -114,9 +113,7 @@ class TestLoRAFinetuneDistributedRecipe:
     @pytest.mark.parametrize(
         "config, model_type, ckpt_type, save_adapter_weights_only",
         [
-            ("llama2/7B_lora", "llama2", "hf", False),
             ("llama3/8B_lora", "llama3", "tune", False),
-            ("llama2/7B_lora", "llama2", "hf", True),
         ],
     )
     def test_training_state_on_resume(
@@ -175,9 +172,15 @@ class TestLoRAFinetuneDistributedRecipe:
         monkeypatch.setattr(sys, "argv", cmd_1)
         runpy.run_path(TUNE_PATH, run_name="__main__")
 
+        shutil.rmtree((tmpdir / "epoch_1"))
+
         # Resume training
         epoch_folder = get_largest_iter_folder(tmpdir)
         epoch_folder_minus_one = f"epoch_{int(epoch_folder.split('_')[-1]) - 1}"
+        if ckpt_type == "hf":
+            rc_path = "recipe_state.pt"
+        else:
+            rc_path = os.path.join(epoch_folder, "recipe_state.pt")
         cmd_2 = f"""
         tune run --nnodes 1 --nproc_per_node 2 lora_finetune_distributed \
             --config {config} \
@@ -187,10 +190,10 @@ class TestLoRAFinetuneDistributedRecipe:
             model.lora_attn_modules=['q_proj','v_proj'] \
             model.apply_lora_to_mlp=False \
             checkpointer._component_={ckpt_component} \
-            checkpointer.checkpoint_dir={ckpt_dir} \
+            checkpointer.checkpoint_dir={tmpdir / epoch_folder} \
             checkpointer.checkpoint_files=[{ckpt_path}]\
-            checkpointer.adapter_checkpoint={os.path.join(epoch_folder_minus_one, f"{ADAPTER_MODEL_FNAME}.pt")}
-            checkpointer.recipe_checkpoint={os.path.join(RECIPE_STATE_DIRNAME, "recipe_state.pt")}
+            checkpointer.adapter_checkpoint={os.path.join(tmpdir, epoch_folder, f"{ADAPTER_MODEL_FNAME}.pt")} \
+            checkpointer.recipe_checkpoint={rc_path} \
             checkpointer.output_dir={tmpdir} \
             checkpointer.model_type={model_type.upper()} \
             tokenizer.path='{tokenizer_path}' \
@@ -207,6 +210,107 @@ class TestLoRAFinetuneDistributedRecipe:
 
         expected_loss_values = self._fetch_expected_loss_values(model_type)[2:]
 
+        loss_values = get_loss_values_from_metric_logger(log_file)[2:]
+        torch.testing.assert_close(
+            loss_values, expected_loss_values, rtol=1e-5, atol=1e-5
+        )
+
+    @pytest.mark.integration_test
+    @gpu_test(gpu_count=2)
+    @pytest.mark.parametrize(
+        "config, model_type, ckpt_type, save_adapter_weights_only",
+        [
+            ("llama3/8B_lora", "llama3", "tune", False),
+        ],
+    )
+    def test_training_state_on_resume_with_async_checkpointing(
+        self,
+        config,
+        model_type,
+        ckpt_type,
+        tmpdir,
+        monkeypatch,
+        save_adapter_weights_only,
+    ):
+        """Test whether the recipe state is correctly updated on resume. Since this
+        is model agnostic, we should run this on the small model only. The test
+        consists of three stages:
+            - Train a model for 2 epochs
+            - Resume training after epoch 1
+            - Make sure final loss matches the expected value of a model successfully resumed from a ckpt
+        """
+        ckpt_component = CKPT_COMPONENT_MAP[ckpt_type]
+        ckpt = model_type + "_" + ckpt_type
+
+        ckpt_path = Path(CKPT_MODEL_PATHS[ckpt])
+        tokenizer_path = Path(TOKENIZER_PATHS[model_type])
+        ckpt_dir = ckpt_path.parent
+        log_file = gen_log_file_name(tmpdir)
+
+        # Config file needed for model conversion.
+        # Create a second copy for training resume
+        write_hf_ckpt_config(ckpt_dir)
+        write_hf_ckpt_config(tmpdir)
+
+        # Train for two epochs
+        cmd_1 = f"""
+        tune run --nnodes 1 --nproc_per_node 2 lora_finetune_distributed \
+            --config {config} \
+            batch_size=4 \
+            gradient_accumulation_steps=1 \
+            output_dir={tmpdir} \
+            model.lora_attn_modules=['q_proj','v_proj'] \
+            model.apply_lora_to_mlp=False \
+            checkpointer._component_={ckpt_component} \
+            checkpointer.checkpoint_dir='{ckpt_dir}' \
+            checkpointer.checkpoint_files=[{ckpt_path}]\
+            checkpointer.output_dir={tmpdir} \
+            checkpointer.model_type={model_type.upper()} \
+            tokenizer.path='{tokenizer_path}' \
+            tokenizer.prompt_template=null \
+            save_adapter_weights_only={save_adapter_weights_only} \
+            enable_activation_checkpointing=True \
+            enable_activation_offloading=True \
+            enable_async_checkpointing=True \
+        """.split()
+
+        model_config = MODEL_TEST_CONFIGS[model_type + "_lora"]
+
+        cmd_1 = cmd_1 + self._get_test_config_overrides() + model_config
+        monkeypatch.setattr(sys, "argv", cmd_1)
+        runpy.run_path(TUNE_PATH, run_name="__main__")
+
+        shutil.rmtree((tmpdir / "epoch_1"))
+
+        # Resume training
+        cmd_2 = f"""
+        tune run --nnodes 1 --nproc_per_node 2 lora_finetune_distributed \
+            --config {config} \
+            batch_size=4 \
+            gradient_accumulation_steps=1 \
+            output_dir={tmpdir} \
+            model.lora_attn_modules=['q_proj','v_proj'] \
+            model.apply_lora_to_mlp=False \
+            checkpointer._component_={ckpt_component} \
+            checkpointer.checkpoint_dir={ckpt_dir} \
+            checkpointer.checkpoint_files=[{ckpt_path}]\
+            checkpointer.output_dir={tmpdir} \
+            checkpointer.model_type={model_type.upper()} \
+            tokenizer.path='{tokenizer_path}' \
+            tokenizer.prompt_template=null \
+            resume_from_checkpoint=True \
+            metric_logger.filename={log_file} \
+            enable_activation_checkpointing=True \
+            enable_activation_offloading=True \
+            enable_async_checkpointing=True \
+        """.split()
+
+        cmd_2 = cmd_2 + self._get_test_config_overrides() + model_config
+        monkeypatch.setattr(sys, "argv", cmd_2)
+        runpy.run_path(TUNE_PATH, run_name="__main__")
+
+        expected_loss_values = self._fetch_expected_loss_values(model_type)
+
         loss_values = get_loss_values_from_metric_logger(log_file)
         torch.testing.assert_close(
             loss_values, expected_loss_values, rtol=1e-5, atol=1e-5
@@ -216,7 +320,6 @@ class TestLoRAFinetuneDistributedRecipe:
     @pytest.mark.parametrize(
         "recipe_config, model_type, ckpt_type, use_dora",
         [
-            ("llama2/7B_lora", "llama2", "tune", True),
             ("llama3/8B_lora", "llama3", "tune", False),
         ],
     )

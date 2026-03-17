@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
-from typing import Callable, List, Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 
@@ -24,7 +24,7 @@ if _SUPPORTS_FLEX_ATTENTION:
 
     def compile_flex_attention():
         try:
-            return torch.compile(flex_attention, dynamic=False)
+            return torch.compile(flex_attention)
         except Exception as e:
             # It may fail on some combinations of hardware/versions. Using max-autotune fixes this issue.
             # Context: https://github.com/pytorch/torchtune/issues/2113
@@ -32,7 +32,7 @@ if _SUPPORTS_FLEX_ATTENTION:
                 f"Compiling flex_attention failed with error '{e}'. Retrying with mode='max-autotune'."
             )
             try:
-                return torch.compile(flex_attention, dynamic=False, mode="max-autotune")
+                return torch.compile(flex_attention, mode="max-autotune")
             except Exception as e:
                 _log.info(
                     f"Compiling flex_attention failed with error: '{e}', "
@@ -62,14 +62,14 @@ else:
 
 
 def _get_document_ids_from_seq_lens(
-    seq_lens: List[torch.Tensor],
+    seq_lens: list[torch.Tensor],
 ) -> torch.Tensor:
     """
     Convert a batch tensor of seq lens into integer IDs denoting sample ownership.
     For example, seq_lens = [2, 3, 1] would return [0, 0, 1, 1, 1, 2].
 
     Args:
-        seq_lens (List[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
+        seq_lens (list[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
             shape (batch_size, n), where n is the max number of sequences in a pack and can vary
             across packs.
 
@@ -92,7 +92,7 @@ def _get_document_ids_from_seq_lens(
     return batch_document_ids
 
 
-def create_block_causal_mask(seq_lens: List[torch.Tensor]) -> torch.Tensor:
+def create_block_causal_mask(seq_lens: list[torch.Tensor]) -> torch.Tensor:
     """
     Given a batch tensor of seq lens defining the lengths of samples in each pack,
     Construct a 2D block causal mask for each pack in the batch. For example, if
@@ -108,7 +108,7 @@ def create_block_causal_mask(seq_lens: List[torch.Tensor]) -> torch.Tensor:
         ]
 
     Args:
-        seq_lens (List[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
+        seq_lens (list[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
             shape (batch_size, n), where n is the max number of sequences in a pack and can vary
             across packs.
 
@@ -131,7 +131,7 @@ def create_block_causal_mask(seq_lens: List[torch.Tensor]) -> torch.Tensor:
 
 
 def packed_block_causal_mask(
-    seq_lens: List[torch.Tensor],
+    seq_lens: list[torch.Tensor],
 ) -> _MaskType:
     """
     Create a block causal document mask for a batch of packed sequences. If
@@ -141,7 +141,7 @@ def packed_block_causal_mask(
     mask. If on an older version, a standard 2D block causal mask is created and returned.
 
     Args:
-        seq_lens (List[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
+        seq_lens (list[torch.Tensor]): Sequence lengths of samples in each pack in the batch,
             shape (batch_size, n), where n is the max number of sequences in a pack and can vary
             across packs.
 
@@ -192,77 +192,108 @@ def _sdpa_or_flex_attention() -> Callable:
     - torch.cuda.get_device_capability() >= (7, 5)
     """
 
-    if _SUPPORTS_FLEX_ATTENTION:
+    # Create SDPA Call
+    def _sdpa_call(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[_MaskType],
+        dropout_p: float,
+        is_causal: bool,
+    ) -> torch.Tensor:
+        # shape: [b, 1, s, s]
+        if mask is not None:
+            mask = mask[:, None, :, :]
 
-        def _attention_call(
-            q: torch.Tensor,
-            k: torch.Tensor,
-            v: torch.Tensor,
-            mask: Optional[_MaskType],
-            dropout_p: float,
-            is_causal: bool,
-        ) -> torch.Tensor:
+        # Flash attention from https://pytorch.org/blog/accelerating-large-language-models/
+        return nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask, dropout_p=dropout_p, is_causal=is_causal
+        )
 
-            # Flex attention uses the BlockMask
-            # (https://github.com/pytorch/pytorch/blob/main/torch/nn/attention/flex_attention.py#L168)
-            # instead of a traditional boolean tensor mask. If this is passed in,
-            # we assume the user wants to use flex attention instead of traditional SDPA.
-            # This will use flash attention under the hood with support for custom masks.
-            # Currently, it is used when sample packing is enabled (see torchtune.datasets.PackedDataset)
-            if isinstance(mask, BlockMask):
+    if not _SUPPORTS_FLEX_ATTENTION:
+        return _sdpa_call
+
+    # Create Flex Attention Call
+    def _attention_call(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[_MaskType],
+        dropout_p: float,
+        is_causal: bool,
+    ) -> torch.Tensor:
+        # Flex attention uses the BlockMask
+        # (https://github.com/pytorch/pytorch/blob/main/torch/nn/attention/flex_attention.py#L168)
+        # instead of a traditional boolean tensor mask. If this is passed in,
+        # we assume the user wants to use flex attention instead of traditional SDPA.
+        # This will use flash attention under the hood with support for custom masks.
+        # Currently, it is used when sample packing is enabled (see torchtune.datasets.PackedDataset)
+        if isinstance(mask, BlockMask):
+            if not torch.compiler.is_compiling():
                 log_once(
                     _log,
                     "Using flex attention for attention computation since a BlockMask was passed in.",
                     level=logging.DEBUG,
                 )
-                if dropout_p > 0.0:
-                    raise ValueError(
-                        "Flex attention does not support dropout. Please set dropout to 0.0."
-                    )
-                return compile_friendly_flex_attention(
-                    q,
-                    k,
-                    v,
-                    block_mask=mask,
+            if dropout_p > 0.0:
+                raise ValueError(
+                    "Flex attention does not support dropout. Please set dropout to 0.0."
                 )
-            # If mask is a standard boolean tensor or None, then use SDPA
-            else:
-                # shape: [b, 1, s, s]
-                if mask is not None:
-                    mask = mask[:, None, :, :]
-
-                # Flash attention from https://pytorch.org/blog/accelerating-large-language-models/
-                return nn.functional.scaled_dot_product_attention(
-                    q,
-                    k,
-                    v,
-                    attn_mask=mask,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                )
-
-    else:
-
-        def _attention_call(
-            q: torch.Tensor,
-            k: torch.Tensor,
-            v: torch.Tensor,
-            mask: Optional[_MaskType],
-            dropout_p: float,
-            is_causal: bool,
-        ) -> torch.Tensor:
-            # shape: [b, 1, s, s]
-            if mask is not None:
-                mask = mask[:, None, :, :]
-
-            # Flash attention from https://pytorch.org/blog/accelerating-large-language-models/
-            return nn.functional.scaled_dot_product_attention(
+            return compile_friendly_flex_attention(
                 q,
                 k,
                 v,
-                attn_mask=mask,
-                dropout_p=dropout_p,
-                is_causal=is_causal,
+                block_mask=mask,
             )
+        else:
+            # If mask is a standard boolean tensor or None, then use SDPA
+            return _sdpa_call(q, k, v, mask, dropout_p, is_causal)
 
     return _attention_call
+
+
+def kv_offset_mask_flex(b, h, q_idx, kv_idx, offset):
+    """
+    Mask mod for autoregressive generation to be used by flex attention. See https://pytorch.org/blog/flexattention/#mask-mods.
+
+    This mask mod can be passed to :func:`~torch.nn.attention.flex_attention.create_block_mask` to create a BlockMask
+    to generate a single token where all past tokens are unmasked.
+
+    Example::
+        >>> from torch.nn.attention.flex_attention import create_block_mask
+        >>> current_token_idx, input_tokens, token_to_generate = 3, 5, 8
+        >>> total_response_length = input_tokens + tokens_to_generate
+        >>> create_block_mask(
+        >>>     mask_mod=partial(kv_offset_mask_flex, offset=current_token_idx),
+        >>>     B=1,
+        >>>     H=None,
+        >>>     Q_LEN=1,
+        >>>     KV_LEN=total_response_length,
+        >>> )
+    """
+    return kv_idx <= offset
+
+
+def causal_mask_flex(b, h, q_idx, kv_idx):
+    """
+    Mask mod for a standard causal mask to be used by flex attention. See https://pytorch.org/blog/flexattention/#mask-mods.
+
+    This mask mod can be passed to :func:`~torch.nn.attention.flex_attention.create_block_mask` to create a BlockMask
+    equivalent of a causal mask.
+
+    Example::
+        >>> # Construct a causal mask for prefill stage of autoregressive generation
+        >>> from torch.nn.attention.flex_attention import create_block_mask
+        >>> bsz, input_tokens, token_to_generate = 2, 3, 5
+        >>> total_response_length = input_tokens + tokens_to_generate
+        >>> create_block_mask(
+        >>>     mask_mod=causal_mask_flex
+        >>>     B=bsz,
+        >>>     H=None,
+        >>>     Q_LEN=input_tokens,
+        >>>     KV_LEN=total_response_length,
+        >>> )
+
+    """
+
+    return q_idx >= kv_idx
