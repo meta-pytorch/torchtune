@@ -193,7 +193,6 @@ class SiglipVisionModel(nn.Module):
         self.final_norm = nn.LayerNorm(embed_dim, layer_norm_eps)
         self.avg_pool = SiglipAveragePooling()
 
-    @torch.inference_mode
     def forward(
         self,
         pixel_values: torch.Tensor,
