@@ -13,6 +13,8 @@ The following tasks are supported:
 - Text supervised fine-tuning
     - :ref:`instruct_dataset_usage_label`
     - :ref:`chat_dataset_usage_label`
+- Fully custom datasets
+    - :ref:`custom_dataset_usage_label`
 - Multimodal supervised fine-tuning
     - :ref:`multimodal_dataset_usage_label`
 - RLHF
