@@ -9,7 +9,6 @@ from typing import Callable, Optional
 from torch import nn
 from torch.distributed.tensor.parallel.style import ParallelStyle
 
-from torchao.dtypes import TensorCoreTiledLayout
 from torchao.float8 import (
     convert_to_float8_training as _convert_to_float8_training_torchao,
     Float8LinearConfig,
@@ -23,6 +22,7 @@ from torchao.quantization import (
     Int8DynamicActivationIntxWeightConfig,
     quantize_,
 )
+from torchao.quantization.quantize_.workflows import Int4PackingFormat
 from torchao.quantization.qat import (
     Int4WeightOnlyQATQuantizer,
     Int8DynActInt4WeightQATQuantizer,
@@ -113,8 +113,10 @@ class Int4WeightOnlyQuantizer:
         self.inner_k_tiles = inner_k_tiles
 
     def quantize(self, model):
-        layout_type = TensorCoreTiledLayout(self.inner_k_tiles)
-        quantize_fn = Int4WeightOnlyConfig(self.groupsize, layout_type)
+        quantize_fn = Int4WeightOnlyConfig(
+            group_size=self.groupsize,
+            int4_packing_format=Int4PackingFormat.TILE_PACKED_TO_4D,
+        )
         quantize_(model, quantize_fn)
         return model
 
