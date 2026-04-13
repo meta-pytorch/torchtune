@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-from torchao.dtypes import to_nf4
+from torchao.quantization import to_nf4
 
 
 class TestNF4DispatchRegistration:

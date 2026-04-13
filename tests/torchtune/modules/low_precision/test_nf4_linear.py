@@ -6,7 +6,7 @@
 
 import pytest
 import torch
-from torchao.dtypes.nf4tensor import NF4Tensor
+from torchao.quantization import NF4Tensor
 from torchtune.modules.low_precision import FrozenNF4Linear
 from torchtune.training.seed import set_seed
 
