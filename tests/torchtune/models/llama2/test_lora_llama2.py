@@ -11,7 +11,7 @@ import torch
 
 from tests.test_utils import assert_expected, fixed_init_model
 from torch import nn
-from torchao.dtypes.nf4tensor import NF4Tensor
+from torchao.quantization import NF4Tensor
 from torchtune import training
 from torchtune.models.llama2 import llama2, lora_llama2
 from torchtune.models.llama2._component_builders import lora_llama2_self_attention

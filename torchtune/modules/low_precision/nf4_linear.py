@@ -9,7 +9,8 @@ from typing import Optional
 import torch
 
 import torch.nn as nn
-from torchao.dtypes.nf4tensor import linear_nf4, to_nf4
+from torchao.quantization import to_nf4
+from torchao.quantization.quantize_.workflows.nf4.nf4_tensor import linear_nf4
 
 
 class FrozenNF4Linear(nn.Linear):

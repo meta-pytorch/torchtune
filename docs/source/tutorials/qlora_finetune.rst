@@ -103,7 +103,7 @@ base model parameters are not quantized. We can see this by printing the base mo
 .. code-block:: python
 
   attn = qlora_model.layers[0].attn
-  print(type(attn.q_proj.weight))  # <class 'torchao.dtypes.nf4tensor.NF4Tensor'>
+  print(type(attn.q_proj.weight))  # <class 'torchao.quantization.quantize_.workflows.nf4.nf4_tensor.NF4Tensor'>
   print(type(attn.k_proj.weight))  # <class 'torch.nn.parameter.Parameter'>
 
 
@@ -220,7 +220,8 @@ a vanilla minimal LoRA layer, taken from :ref:`the LoRA tutorial <lora_finetune_
   import torch
   from torch import nn
   import torch.nn.functional as F
-  from torchao.dtypes.nf4tensor import linear_nf4, to_nf4
+  from torchao.quantization import to_nf4
+  from torchao.quantization.quantize_.workflows.nf4.nf4_tensor import linear_nf4
 
   class LoRALinear(nn.Module):
     def __init__(

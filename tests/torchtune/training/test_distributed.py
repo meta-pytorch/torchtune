@@ -21,7 +21,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 from torch.testing._internal.common_fsdp import FSDPTest, MLP
-from torchao.dtypes.nf4tensor import NF4Tensor
+from torchao.quantization import NF4Tensor
 from torchtune import modules, training
 from torchtune.models.llama2._component_builders import lora_llama2
 from torchtune.models.llama3_1._component_builders import llama3_mlp

@@ -13,7 +13,7 @@ import torch
 import torchao
 from torch import nn
 from torch.autograd.graph import saved_tensors_hooks
-from torchao.dtypes.nf4tensor import NF4Tensor
+from torchao.quantization import NF4Tensor
 
 from torchtune.modules import TiedLinear
 from torchtune.utils import get_logger

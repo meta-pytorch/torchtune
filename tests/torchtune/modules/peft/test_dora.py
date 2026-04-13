@@ -17,7 +17,7 @@ from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed._tensor import DTensor, Replicate
 
 from torch.testing._internal.common_fsdp import FSDPTest
-from torchao.dtypes.nf4tensor import NF4Tensor, to_nf4
+from torchao.quantization import NF4Tensor, to_nf4
 from torchtune import training
 from torchtune.modules.common_utils import reparametrize_as_dtype_state_dict_post_hook
 from torchtune.modules.feed_forward import FeedForward
