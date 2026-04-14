@@ -11,7 +11,7 @@ import torch
 
 from tests.test_utils import assert_expected, fixed_init_model
 from torch import nn
-from torchao.dtypes.nf4tensor import NF4Tensor
+from torchao.quantization import NF4Tensor
 from torchtune import training
 from torchtune.models.phi3 import lora_phi3, phi3
 from torchtune.models.phi3._component_builders import lora_phi3_self_attention

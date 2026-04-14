@@ -36,7 +36,7 @@ from torch.nn.attention import sdpa_kernel, SDPBackend
 from torch.nn.attention.flex_attention import BlockMask
 from torch.nn.modules.module import _IncompatibleKeys
 from torch.optim import Optimizer
-from torchao.dtypes.nf4tensor import NF4Tensor, to_nf4
+from torchao.quantization import NF4Tensor, to_nf4
 from torchtune.modules import TransformerDecoder
 from torchtune.modules.attention import MultiHeadAttention
 from torchtune.modules.model_fusion import DeepFusionModel, EarlyFusionModel

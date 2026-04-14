@@ -12,7 +12,8 @@ import torch.nn.functional as F
 
 from torch import nn
 
-from torchao.dtypes.nf4tensor import linear_nf4, to_nf4
+from torchao.quantization import to_nf4
+from torchao.quantization.quantize_.workflows.nf4.nf4_tensor import linear_nf4
 from torchtune.modules.low_precision import _register_nf4_dispatch_ops  # noqa: F401
 from torchtune.modules.peft import AdapterModule
 

@@ -11,7 +11,7 @@ import pytest
 import torch
 from tests.test_utils import fixed_init_model, mps_ignored_test
 from torch import nn
-from torchao.dtypes.nf4tensor import NF4Tensor, to_nf4
+from torchao.quantization import NF4Tensor, to_nf4
 from torchtune import training
 from torchtune.modules.common_utils import reparametrize_as_dtype_state_dict_post_hook
 from torchtune.modules.peft import LoRALinear, QATLoRALinear
