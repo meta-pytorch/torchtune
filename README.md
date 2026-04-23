@@ -1,6 +1,8 @@
 
 
 
+> ⚠️ **Torchtune is no longer actively maintained:** torchtune development wound down in 2025 — see [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
+
 # torchtune
 
 [![Unit Test](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml/badge.svg?branch=main)](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml)
@@ -8,8 +10,6 @@
 [![](https://dcbadge.vercel.app/api/server/4Xsdn8Rr9Q?style=flat)](https://discord.gg/4Xsdn8Rr9Q)
 
 [**Overview**](#overview-) | [**Installation**](#installation-%EF%B8%8F) | [**Get Started**](#get-started-) |  [**Documentation**](https://pytorch.org/torchtune/main/index.html) | [**Community**](#community-) | [**Citing torchtune**](#citing-torchtune-) | [**License**](#license)
-
-> ⚠️ **Torchtune is no longer actively maintained:** torchtune development wound down in 2025 — see [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
 
 ### 📣 Recent updates 📣
 * *May 2025*: torchtune has added support for *Qwen3* models! Check out all the configs [here](recipes/configs/qwen3)
