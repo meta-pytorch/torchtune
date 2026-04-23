@@ -9,6 +9,8 @@
 
 [**Overview**](#overview-) | [**Installation**](#installation-%EF%B8%8F) | [**Get Started**](#get-started-) |  [**Documentation**](https://pytorch.org/torchtune/main/index.html) | [**Community**](#community-) | [**Citing torchtune**](#citing-torchtune-) | [**License**](#license)
 
+> ⚠️ **Torchtune is no longer actively maintained:** torchtune development wound down in 2025 — see [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
+
 ### 📣 Recent updates 📣
 * *May 2025*: torchtune has added support for *Qwen3* models! Check out all the configs [here](recipes/configs/qwen3)
 * *April 2025*: **Llama4** is now available in torchtune! Try out our full and LoRA finetuning configs [here](recipes/configs/llama4)
