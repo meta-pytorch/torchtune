@@ -1,6 +1,8 @@
 
 
 
+> ⚠️ **Torchtune is no longer actively maintained:** torchtune development wound down in 2025 — see [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
+
 # torchtune
 
 [![Unit Test](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml/badge.svg?branch=main)](https://github.com/pytorch/torchtune/actions/workflows/unit_test.yaml)
