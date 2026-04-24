@@ -14,7 +14,7 @@ import safetensors
 import torch
 from torch import randn
 
-from torchtune.models import gemma, llama2, mistral
+from torchtune.models import gemma, gemma3, llama2, mistral
 from torchtune.modules.peft import (
     get_adapter_params,
     get_lora_module_names,
@@ -916,3 +916,139 @@ class TestHFGemmaFullModelCheckpointer:
         output_state_dict = safe_torch_load(output_file)
 
         assert len(output_state_dict.keys()) == len(orig_state_dict.keys())
+
+
+class TestHFGemma3FullModelCheckpointer:
+    @pytest.fixture
+    def weight_dtype(self):
+        return torch.float16
+
+    @pytest.fixture
+    def state_dict(self, weight_dtype):
+        """
+        State dict for a HF format Gemma3 checkpoint. This state dict is
+        "complete" and can be loaded into a TorchTune model once correctly converted.
+        """
+        state_dict = {
+            "model.embed_tokens.weight": randn(_VOCAB_SIZE, _DIM, dtype=weight_dtype),
+            "model.layers.0.input_layernorm.weight": randn(_DIM, dtype=weight_dtype),
+            "model.layers.0.self_attn.q_proj.weight": randn(
+                _DIM, _NUM_HEADS * _HEAD_DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.k_proj.weight": randn(
+                _HEAD_DIM, _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.v_proj.weight": randn(
+                _HEAD_DIM, _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.k_norm.weight": randn(
+                _HEAD_DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.q_norm.weight": randn(
+                _HEAD_DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.o_proj.weight": randn(
+                _NUM_HEADS * _HEAD_DIM, _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.self_attn.rotary_emb.inv_freq": randn(
+                _HEAD_DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.post_attention_layernorm.weight": randn(
+                _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.pre_feedforward_layernorm.weight": randn(
+                _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.post_feedforward_layernorm.weight": randn(
+                _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.mlp.gate_proj.weight": randn(
+                _HIDDEN_DIM, _DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.mlp.down_proj.weight": randn(
+                _DIM, _HIDDEN_DIM, dtype=weight_dtype
+            ),
+            "model.layers.0.mlp.up_proj.weight": randn(
+                _HIDDEN_DIM, _DIM, dtype=weight_dtype
+            ),
+            "model.norm.weight": randn(_DIM, dtype=weight_dtype),
+            "lm_head.weight": randn(_VOCAB_SIZE, _DIM, dtype=weight_dtype),
+        }
+        return state_dict
+
+    @pytest.fixture
+    def gemma3_hf_checkpoint(self, tmp_path, state_dict):
+        checkpoint_dir = Path.joinpath(tmp_path, "checkpoint_dir")
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        checkpoint_file = checkpoint_dir / "gemma3_hf_checkpoint.pt"
+        torch.save(state_dict, checkpoint_file)
+
+        config = {
+            "text_config": {
+                "hidden_size": _DIM,
+                "num_attention_heads": _NUM_HEADS,
+                "num_key_value_heads": 1,
+                "head_dim": _HEAD_DIM,
+            }
+        }
+        config_file = Path.joinpath(checkpoint_dir, "config.json")
+        with config_file.open("w") as f:
+            json.dump(config, f)
+
+        return checkpoint_file
+
+    @pytest.fixture
+    def single_file_checkpointer(
+        self, gemma3_hf_checkpoint, tmp_path
+    ) -> FullModelHFCheckpointer:
+        checkpoint_file = gemma3_hf_checkpoint
+        checkpoint_dir = str(Path.joinpath(tmp_path, "checkpoint_dir"))
+        output_dir = str(Path.joinpath(tmp_path, "output_dir"))
+        return FullModelHFCheckpointer(
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_files=[checkpoint_file],
+            model_type="GEMMA3",
+            output_dir=output_dir,
+        )
+
+    def test_load_save_checkpoint_single_file(
+        self,
+        single_file_checkpointer: FullModelHFCheckpointer,
+        gemma3_hf_checkpoint: Path,
+    ):
+        checkpoint_file = gemma3_hf_checkpoint
+        orig_state_dict = safe_torch_load(checkpoint_file)
+
+        state_dict = single_file_checkpointer.load_checkpoint()
+        assert len(state_dict["model"].keys()) + 1 == len(orig_state_dict.keys())
+
+        for key in orig_state_dict.keys():
+            if "inv_freq" in key:
+                continue
+            assert key in single_file_checkpointer._weight_map
+
+        model = gemma3.gemma3(
+            vocab_size=_VOCAB_SIZE,
+            num_layers=1,
+            num_heads=_NUM_HEADS,
+            head_dim=_HEAD_DIM,
+            num_kv_heads=1,
+            embed_dim=_DIM,
+            intermediate_dim=_HIDDEN_DIM,
+            max_seq_len=128,
+        )
+        model.load_state_dict(state_dict["model"])
+
+        single_file_checkpointer.save_checkpoint(state_dict, epoch=1)
+
+        output_file = Path.joinpath(
+            checkpoint_file.parent.parent / "output_dir",
+            "epoch_1",
+            SHARD_FNAME.format(cpt_idx="1".zfill(5), num_shards="1".zfill(5)),
+        ).with_suffix(".safetensors")
+        output_state_dict = safe_torch_load(output_file)
+
+        assert len(output_state_dict.keys()) + 1 == len(orig_state_dict.keys())
+        for key, value in output_state_dict.items():
+            torch.testing.assert_close(value, orig_state_dict[key])
