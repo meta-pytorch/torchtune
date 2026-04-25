@@ -19,7 +19,7 @@ dependencies = [
     "safetensors",
 
     # Kaggle Integrations
-    "kagglehub",
+    "kagglehub==0.4.0",
 
     # Tokenization
     "sentencepiece",
