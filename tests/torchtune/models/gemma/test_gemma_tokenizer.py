@@ -4,6 +4,8 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import warnings
+
 import pytest
 from tests.common import ASSETS
 from torchtune.data import Message
@@ -83,11 +85,13 @@ class TestGemmaTokenizer:
                 "good conversation over coffee.",
             ),
         ]
-        tokens, mask = tokenizer.tokenize_messages(
-            messages,
-            add_start_tokens=add_start_tokens,
-            add_end_tokens=add_end_tokens,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            tokens, mask = tokenizer.tokenize_messages(
+                messages,
+                add_start_tokens=add_start_tokens,
+                add_end_tokens=add_end_tokens,
+            )
         if not add_start_tokens:
             expected_tokens = expected_tokens[1:]
         if not add_end_tokens:
@@ -98,12 +102,11 @@ class TestGemmaTokenizer:
         assert expected_tokens == tokens
         assert expected_mask == mask
 
-        if not add_end_tokens:
-            with pytest.deprecated_call():
-                legacy_tokens, legacy_mask = tokenizer.tokenize_messages(
-                    messages,
-                    add_start_tokens=add_start_tokens,
-                    add_eos=False,
-                )
-            assert legacy_tokens == tokens
-            assert legacy_mask == mask
+        with pytest.deprecated_call():
+            legacy_tokens, legacy_mask = tokenizer.tokenize_messages(
+                messages,
+                add_start_tokens=add_start_tokens,
+                add_eos=add_end_tokens,
+            )
+        assert legacy_tokens == tokens
+        assert legacy_mask == mask
