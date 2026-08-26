@@ -776,13 +776,13 @@ class FullDPORecipeDistributed(FTRecipeInterface):
         chosen_log_probs = rlhf.get_batch_log_probs(
             all_logits[:len_chosen],
             concatenated_labels[:len_chosen],
-            return_average_logprobs=False,
+            return_average_logprobs=self._loss_fn.return_average_logprobs,
         )
 
         rejected_log_probs = rlhf.get_batch_log_probs(
             all_logits[len_chosen:],
             concatenated_labels[len_chosen:],
-            return_average_logprobs=False,
+            return_average_logprobs=self._loss_fn.return_average_logprobs,
         )
 
         chosen_logits = all_logits[:len_chosen]

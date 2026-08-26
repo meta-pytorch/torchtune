@@ -7,7 +7,7 @@
 import pytest
 import torch
 from torchtune.rlhf._types import ChosenRejectedOutputs
-from torchtune.rlhf.loss import DPOLoss, RSOLoss
+from torchtune.rlhf.loss import DPOLoss, RSOLoss, SimPOLoss
 
 
 @pytest.fixture(autouse=True)
@@ -100,3 +100,99 @@ class TestDPOLosses:
         losses, *_ = rso_loss(*loss_inputs)
 
         torch.testing.assert_close(losses, expected_losses, atol=1e-4, rtol=1e-5)
+
+
+class TestSimPOLoss:
+    @pytest.fixture
+    def simpo_loss(self):
+        return SimPOLoss(
+            beta=2.0,
+            gamma_beta_ratio=0.25,
+        )
+
+    @pytest.fixture
+    def policy_inputs(self):
+        return ChosenRejectedOutputs(
+            torch.tensor([-0.5, -1.0, -2.0]),
+            torch.tensor([-1.0, -0.5, -2.5]),
+            torch.tensor(0),
+            torch.tensor(0),
+        )
+
+    def test_simpo_loss(self, simpo_loss, policy_inputs):
+        """
+        chosen - rejected - gamma_beta_ratio:
+            [-0.5 - (-1.0) - 0.25, -1.0 - (-0.5) - 0.25, -2.0 - (-2.5) - 0.25]
+            = [0.25, -0.75, 0.25]
+        scaled by beta=2.0: [0.5, -1.5, 0.5]
+        loss = -logsigmoid(scaled)
+        """
+        scaled_logits = torch.tensor([0.5, -1.5, 0.5])
+        expected_losses = -torch.nn.functional.logsigmoid(scaled_logits)
+        expected_chosen_rewards = 2.0 * policy_inputs.chosen_logps
+        expected_rejected_rewards = 2.0 * policy_inputs.rejected_logps
+
+        dummy_reference = ChosenRejectedOutputs(
+            torch.tensor([1.0, 2.0, 3.0]),
+            torch.tensor([4.0, 5.0, 6.0]),
+            torch.tensor(0),
+            torch.tensor(0),
+        )
+        losses, chosen_rewards, rejected_rewards = simpo_loss(
+            policy_inputs, dummy_reference
+        )
+
+        torch.testing.assert_close(losses, expected_losses, atol=1e-4, rtol=1e-5)
+        torch.testing.assert_close(
+            chosen_rewards, expected_chosen_rewards, atol=1e-4, rtol=1e-5
+        )
+        torch.testing.assert_close(
+            rejected_rewards, expected_rejected_rewards, atol=1e-4, rtol=1e-5
+        )
+
+    def test_all_none_reference_inputs(self, simpo_loss, policy_inputs):
+        none_reference = ChosenRejectedOutputs(None, None, None, None)
+        dummy_reference = ChosenRejectedOutputs(
+            torch.tensor([1.0, 2.0, 3.0]),
+            torch.tensor([4.0, 5.0, 6.0]),
+            torch.tensor(0),
+            torch.tensor(0),
+        )
+
+        losses_none, chosen_none, rejected_none = simpo_loss(
+            policy_inputs, none_reference
+        )
+        losses_dummy, chosen_dummy, rejected_dummy = simpo_loss(
+            policy_inputs, dummy_reference
+        )
+
+        torch.testing.assert_close(losses_none, losses_dummy, atol=1e-4, rtol=1e-5)
+        torch.testing.assert_close(chosen_none, chosen_dummy, atol=1e-4, rtol=1e-5)
+        torch.testing.assert_close(rejected_none, rejected_dummy, atol=1e-4, rtol=1e-5)
+
+    def test_properties(self):
+        simpo_loss = SimPOLoss()
+        assert simpo_loss.is_reference_free is True
+        assert simpo_loss.return_average_logprobs is True
+        assert DPOLoss().is_reference_free is False
+        assert DPOLoss().return_average_logprobs is False
+        assert RSOLoss().is_reference_free is False
+        assert RSOLoss().return_average_logprobs is False
+
+    def test_finite_gradients(self, simpo_loss):
+        policy_inputs = ChosenRejectedOutputs(
+            torch.tensor([-0.5, -1.0, -2.0], requires_grad=True),
+            torch.tensor([-1.0, -0.5, -2.5], requires_grad=True),
+            torch.tensor(0),
+            torch.tensor(0),
+        )
+        none_reference = ChosenRejectedOutputs(None, None, None, None)
+
+        losses, *_ = simpo_loss(policy_inputs, none_reference)
+        assert torch.isfinite(losses).all()
+
+        losses.mean().backward()
+        assert policy_inputs.chosen_logps.grad is not None
+        assert policy_inputs.rejected_logps.grad is not None
+        assert torch.isfinite(policy_inputs.chosen_logps.grad).all()
+        assert torch.isfinite(policy_inputs.rejected_logps.grad).all()
