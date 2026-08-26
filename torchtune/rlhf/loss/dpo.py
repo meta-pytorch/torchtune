@@ -4,6 +4,9 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+from dataclasses import dataclass
+from typing import Optional, Tuple, TypeVar
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,6 +20,11 @@ T = TypeVar("T", bound=dataclass)
 class PreferenceLoss(nn.Module):
     @property
     def is_reference_free(self) -> bool:
+        return False
+
+    @property
+    def return_average_logprobs(self) -> bool:
+        """If True, sequence log-probs are masked means; if False, masked sums."""
         return False
 
     def forward(
@@ -177,5 +185,66 @@ class RSOLoss(PreferenceLoss):
             self.gamma
             * (policy_inputs.rejected_logps - reference_inputs.rejected_logps).detach()
         )
+
+        return losses, chosen_rewards, rejected_rewards
+
+
+class SimPOLoss(PreferenceLoss):
+    """
+    Simple Preference Optimization (SimPO) Loss module: https://arxiv.org/abs/2405.14734
+
+    SimPO uses a reference-free implicit reward equal to the average log probability of
+    response tokens under the policy, and applies a target reward margin in the
+    Bradley-Terry objective. Policy ``chosen_logps`` and ``rejected_logps`` must be
+    masked averages over response tokens, not sequence sums.
+
+    Args:
+        beta (float): Scaling factor for the implicit reward. Default is 2.0.
+        gamma_beta_ratio (float): Target reward margin divided by beta (γ/β). Default is 0.25.
+    """
+
+    def __init__(
+        self,
+        beta: float = 2.0,
+        gamma_beta_ratio: float = 0.25,
+    ):
+        super().__init__()
+        self.beta = beta
+        self.gamma_beta_ratio = gamma_beta_ratio
+
+    @property
+    def is_reference_free(self) -> bool:
+        return True
+
+    @property
+    def return_average_logprobs(self) -> bool:
+        return True
+
+    def forward(
+        self,
+        policy_inputs: ChosenRejectedOutputs,
+        _reference_inputs: ChosenRejectedOutputs,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute the SimPO loss for a batch of policy model log probabilities.
+
+        Args:
+            policy_inputs (ChosenRejectedOutputs): Policy log-probs and logits required for the calculation.
+                ``chosen_logps`` and ``rejected_logps`` must be masked averages over response tokens.
+            _reference_inputs (ChosenRejectedOutputs): Unused. Present to match the PreferenceLoss signature.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple of three tensors:
+                - losses: The SimPO loss for each example in the batch.
+                - chosen_rewards: Rewards for the chosen responses.
+                - rejected_rewards: Rewards for the rejected responses.
+        """
+        pi_logratios = policy_inputs.chosen_logps - policy_inputs.rejected_logps
+        logits = pi_logratios - self.gamma_beta_ratio
+
+        losses = -F.logsigmoid(self.beta * logits)
+
+        chosen_rewards = (self.beta * policy_inputs.chosen_logps).detach()
+        rejected_rewards = (self.beta * policy_inputs.rejected_logps).detach()
 
         return losses, chosen_rewards, rejected_rewards

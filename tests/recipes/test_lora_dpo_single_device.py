@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import math
 import os
 import runpy
 import shutil
@@ -300,3 +301,58 @@ class TestLoRADPOSingleDeviceRecipe:
         llama3_model.load_state_dict(sd)
         merged_ckpt_out = llama3_model(inputs)
         torch.testing.assert_close(baseline_out, merged_ckpt_out, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.integration_test
+    @gpu_test(gpu_count=1)
+    def test_simpo_one_step_finite_loss(self, tmpdir, monkeypatch):
+        ckpt = "llama3_tune"
+        ckpt_path = Path(CKPT_MODEL_PATHS[ckpt])
+        ckpt_dir = ckpt_path.parent
+        log_file = gen_log_file_name(tmpdir)
+
+        write_hf_ckpt_config(ckpt_dir)
+
+        cmd = f"""
+        tune run lora_dpo_single_device \
+            --config llama3_1/8B_lora_simpo_single_device \
+            output_dir={tmpdir} \
+            model.lora_attn_modules=['q_proj','v_proj'] \
+            model.apply_lora_to_mlp=False \
+            checkpointer=torchtune.training.FullModelTorchTuneCheckpointer \
+            checkpointer.checkpoint_dir='{ckpt_dir}' \
+            checkpointer.checkpoint_files=[{ckpt_path}]\
+            checkpointer.output_dir={tmpdir} \
+            checkpointer.model_type=LLAMA3 \
+            tokenizer.path=/tmp/test-artifacts/tokenizer_llama3.model \
+            tokenizer.prompt_template=null \
+            metric_logger.filename={log_file} \
+            enable_activation_checkpointing=True \
+            enable_activation_offloading=False \
+        """.split()
+
+        model_config = MODEL_TEST_CONFIGS["llama3_lora"]
+        cmd = (
+            cmd
+            + [
+                "batch_size=1",
+                "dtype=fp32",
+                "dataset.train_on_input=False",
+                "seed=9",
+                "epochs=1",
+                "max_steps_per_epoch=1",
+                "optimizer.lr=2e-5",
+                "log_every_n_steps=1",
+                "gradient_accumulation_steps=1",
+                "clip_grad_norm=100",
+                "tokenizer.max_seq_len=512",
+            ]
+            + dummy_stack_exchange_dataset_config()
+            + model_config
+        )
+        monkeypatch.setattr(sys, "argv", cmd)
+        with pytest.raises(SystemExit, match=""):
+            runpy.run_path(TUNE_PATH, run_name="__main__")
+
+        loss_values = get_loss_values_from_metric_logger(log_file)
+        assert len(loss_values) >= 1
+        assert all(math.isfinite(loss) for loss in loss_values)
