@@ -129,7 +129,8 @@ class MistralTokenizer(ModelTokenizer, Transform):
         self,
         messages: list[Message],
         *,
-        add_eos: bool = True,
+        add_start_tokens: bool = True,
+        add_end_tokens: bool = True,
     ) -> tuple[list[int], list[bool]]:
         r"""Tokenize a list of messages one at a time then concatenate them,
         returning a list of tokens and a list of masks.
@@ -161,7 +162,9 @@ class MistralTokenizer(ModelTokenizer, Transform):
         Args:
             messages (list[Message]): A list of messages, each containing role, content,
                 and masked attributes.
-            add_eos (bool): Whether to append EOS after assistant message, default to True
+            add_start_tokens (bool): Whether to add BOS tokens at the start of each turn.
+                Default True.
+            add_end_tokens (bool): Whether to add EOS tokens after assistant messages. Default True.
 
         Returns:
             tuple[list[int], list[bool]]: The tokenized messages
@@ -174,8 +177,8 @@ class MistralTokenizer(ModelTokenizer, Transform):
         return tokenize_messages_no_special_tokens(
             tokenizer=self,
             messages=templated_messages,
-            bos_id=self.bos_id,
-            eos_id=self.eos_id if add_eos else None,
+            bos_id=self.bos_id if add_start_tokens else None,
+            eos_id=self.eos_id if add_end_tokens else None,
             truncation_type=self.truncation_type,
         )
 
@@ -188,15 +191,14 @@ class MistralTokenizer(ModelTokenizer, Transform):
         Args:
             sample (Mapping[str, Any]): A sample with a "messages" field containing
                 a list[Message] to tokenize
-            inference (bool): Whether the template is being used for inference or not.
+            inference (bool): Whether to omit end tokens for generation.
 
         Returns:
             Mapping[str, Any]: The sample with added "tokens" and "mask" fields
                 and the "messages" field removed.
-            inference (bool): Whether the template is being used for inference or not.
         """
         messages = sample.pop("messages")
-        tokens, mask = self.tokenize_messages(messages)
+        tokens, mask = self.tokenize_messages(messages, add_end_tokens=not inference)
         sample["tokens"] = tokens
         sample["mask"] = mask
         return sample
