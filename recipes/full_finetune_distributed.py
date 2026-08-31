@@ -263,7 +263,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 )
         elif (
             self._enable_activation_checkpointing
-            and cfg.checkpointer.model_type != "LLAMA3_VISION"
+            and cfg.checkpointer.get("model_type") != "LLAMA3_VISION"
         ):
             utils.log_rank_zero(
                 self._logger,

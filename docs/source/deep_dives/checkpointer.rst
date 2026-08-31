@@ -289,6 +289,12 @@ can take significant time.
 To enable asynchronous checkpointing in your training config, you need to set the ``enable_async_checkpointing``
 flag to ``True``. The DistributedCheckpointer will be automatically used when this flag is enabled.
 
+.. note::
+
+    Do not configure ``DistributedCheckpointer`` directly as the recipe's ``checkpointer``. It is used internally
+    for intermediate checkpoints and cannot load the base model checkpoint or write the final model-format checkpoint.
+    Configure a model checkpointer, such as ``FullModelHFCheckpointer``, and set ``enable_async_checkpointing: True``.
+
 .. code-block:: yaml
 
     checkpointer:
