@@ -229,6 +229,11 @@ class _VLMEvalWrapper(HFMultimodalLM):
                 "multimodal generation."
             )
 
+        # The harness passes the total sequence length, including the prompt.
+        max_new_tokens = max_length - seq_len
+        if max_new_tokens < 1:
+            raise ValueError("max_length must be greater than the prompt length.")
+
         encoder_max_seq_len = (
             self.model_transform.image_seq_len * self._max_images_per_sample
         )
@@ -263,7 +268,8 @@ class _VLMEvalWrapper(HFMultimodalLM):
             cache_mask = batch["encoder_mask"][:, -1:]
 
             # 4. Continue generating
-            for _ in range(max_length):
+            # Prefill has already generated the first token.
+            for _ in range(max_new_tokens - 1):
                 if token.item() in self.model_transform.stop_tokens:
                     break
                 logits = self.model(
@@ -277,8 +283,8 @@ class _VLMEvalWrapper(HFMultimodalLM):
                 generated_tokens.append(token.item())
                 seq_len += 1
 
-        # 5. Return generated tokens
-        return torch.tensor(generated_tokens, dtype=torch.int32).unsqueeze(0)
+        # 5. The harness removes the prompt before decoding the continuation.
+        return torch.cat((prompt, prompt.new_tensor([generated_tokens])), dim=1)
 
 
 class _LLMEvalWrapper(HFLM):
