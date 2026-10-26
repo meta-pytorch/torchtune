@@ -136,3 +136,52 @@ class TestPPOLoss:
             returns,
         )
         assert value_loss_lower.mean() < value_loss_higher.mean()
+
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+    @pytest.mark.parametrize("padding_case", ["overflow", "negative_infinity"])
+    def test_masked_extreme_log_ratios_do_not_poison_ppo(self, loss_fn, dtype, padding_case):
+        old_logprobs = torch.tensor([-1001.0, -1.0], dtype=dtype)
+        if padding_case == "negative_infinity":
+            old_logprobs[0] = float("-inf")
+            logprobs = torch.tensor([float("-inf"), -1.0], dtype=dtype, requires_grad=True)
+        else:
+            logprobs = torch.tensor([-1.0, -1.0], dtype=dtype, requires_grad=True)
+
+        advantages = torch.ones_like(logprobs)
+        values = torch.zeros_like(logprobs)
+        padding_mask = torch.tensor([False, True])
+        loss, policy_loss, *_ = loss_fn(
+            old_logprobs,
+            logprobs,
+            advantages,
+            values,
+            values,
+            values,
+            padding_masks=padding_mask,
+            value_padding_masks=padding_mask,
+        )
+        loss.backward()
+
+        torch.testing.assert_close(policy_loss, torch.tensor(-1.0, dtype=dtype))
+        torch.testing.assert_close(loss, torch.tensor(-1.0, dtype=dtype))
+        torch.testing.assert_close(logprobs.grad, torch.tensor([0.0, -1.0], dtype=dtype))
+
+    def test_all_masked_ppo_is_zero(self, loss_fn):
+        logprobs = torch.tensor([-1.0, -1.0], requires_grad=True)
+        zeros = torch.zeros_like(logprobs)
+        padding_mask = torch.zeros_like(logprobs, dtype=torch.bool)
+        loss, policy_loss, *_ = loss_fn(
+            logprobs.detach(),
+            logprobs,
+            torch.ones_like(logprobs),
+            zeros,
+            zeros,
+            zeros,
+            padding_masks=padding_mask,
+            value_padding_masks=padding_mask,
+        )
+        loss.backward()
+        torch.testing.assert_close(loss, torch.tensor(0.0))
+        torch.testing.assert_close(policy_loss, torch.tensor(0.0))
+        torch.testing.assert_close(logprobs.grad, zeros)
