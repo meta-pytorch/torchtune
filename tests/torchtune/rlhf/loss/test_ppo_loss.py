@@ -163,8 +163,8 @@ class TestPPOLoss:
         )
         loss.backward()
 
-        torch.testing.assert_close(policy_loss, torch.tensor(-1.0, dtype=dtype))
-        torch.testing.assert_close(loss, torch.tensor(-1.0, dtype=dtype))
+        torch.testing.assert_close(policy_loss, torch.tensor(-1.0, dtype=policy_loss.dtype))
+        torch.testing.assert_close(loss, torch.tensor(-1.0, dtype=loss.dtype))
         torch.testing.assert_close(logprobs.grad, torch.tensor([0.0, -1.0], dtype=dtype))
 
     def test_all_masked_ppo_is_zero(self, loss_fn):
