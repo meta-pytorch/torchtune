@@ -76,7 +76,11 @@ class PPOLoss(nn.Module):
                 - clipfrac: The fraction of ratios that were clipped.
 
         """
-        ratios = torch.exp(pi_logprobs - pi_old_logprobs)
+        log_ratios = pi_logprobs - pi_old_logprobs
+        if padding_masks is not None:
+            # Excluded positions may contain overflowed or sentinel log probabilities.
+            log_ratios = torch.where(padding_masks.bool(), log_ratios, torch.zeros_like(log_ratios))
+        ratios = torch.exp(log_ratios)
         clipped_ratios = torch.clamp(ratios, 1.0 - self.epsilon, 1.0 + self.epsilon)
 
         policy_losses_clipped = -advantages * clipped_ratios
