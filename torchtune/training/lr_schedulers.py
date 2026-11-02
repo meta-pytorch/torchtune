@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
+from types import MethodType
 from typing import Union
 
 import torch
@@ -28,14 +29,10 @@ def _ensure_step_is_bound_like_method(optimizer):
         return
 
     # Otherwise wrap to simulate a bound method
-    def step_wrapper(*args, **kwargs):
+    def step_wrapper(_self, /, *args, **kwargs):
         return step_fn(*args, **kwargs)
 
-    # Provide the attributes that LR schedulers rely on
-    step_wrapper.__func__ = step_fn
-    step_wrapper.__self__ = optimizer
-
-    optimizer.step = step_wrapper
+    optimizer.step = MethodType(step_wrapper, optimizer)
 
 
 def get_cosine_schedule_with_warmup(
