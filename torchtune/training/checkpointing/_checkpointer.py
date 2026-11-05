@@ -1318,8 +1318,10 @@ class DistributedCheckpointer(_CheckpointerInterface):
         self,
         checkpoint_dir: str,
         output_dir: str,
+        model_type: str,
         process_group: Optional[dist.ProcessGroup] = None,
     ) -> None:
+        self._model_type = ModelType[model_type]
         self._checkpoint_dir = Path(checkpoint_dir)
         self._output_dir = Path(output_dir)
         self._checkpoint_future = None
