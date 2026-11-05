@@ -64,6 +64,9 @@ class ReverseKLLoss(torch.nn.Module):
     The Kullback-Leibler divergence loss for valid indexes.
     Implementation of https://github.com/jongwooko/distillm/blob/17c0f98bc263b1861a02d5df578c84aea652ee65/distillm/losses.py
 
+    Shared negative-infinity vocabulary masks have zero contribution to both the
+    loss and its gradients.
+
     Args:
         ignore_index (int):  Specifies a target value that is ignored and does not contribute to the input gradient.
             The loss is divided over non-ignored targets.
@@ -102,8 +105,10 @@ class ReverseKLLoss(torch.nn.Module):
 
         inf_mask = torch.isinf(student_logits) | torch.isinf(teacher_logits)
 
-        prod_probs = torch.masked_fill(student_prob * teacher_logprob, inf_mask, 0)
-        prod_probs -= torch.masked_fill(student_prob * student_logprob, inf_mask, 0)
+        # Mask before multiplication so backward never evaluates 0 * -inf.
+        student_logprob = student_logprob.masked_fill(inf_mask, 0)
+        teacher_logprob = teacher_logprob.masked_fill(inf_mask, 0)
+        prod_probs = student_prob * (teacher_logprob - student_logprob)
         x = torch.sum(prod_probs, dim=-1).view(-1)
 
         mask = (labels != self.ignore_index).int()
