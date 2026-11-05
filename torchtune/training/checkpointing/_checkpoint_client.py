@@ -124,6 +124,7 @@ class CheckpointClient:
             self._dcp_checkpointer = DistributedCheckpointer(
                 checkpoint_dir=checkpointer._checkpoint_dir,
                 output_dir=checkpointer._output_dir,
+                model_type=checkpointer._model_type.name,
             )
         return self._dcp_checkpointer
 
