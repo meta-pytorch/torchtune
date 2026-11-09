@@ -1309,6 +1309,9 @@ class DistributedCheckpointer(_CheckpointerInterface):
     Args:
         checkpoint_dir (str): Directory containing the checkpoint files
         output_dir (str): Directory to save the checkpoint files
+        model_type (str): Model type of the model for which the checkpointer is being loaded,
+            e.g. ``LLAMA3``. See :class:`~torchtune.training.checkpointing._utils.ModelType`
+            for the supported values.
         process_group (Optional[dist.ProcessGroup]): Optional process group to use
             for distributed saving/loading. If None, the default process group will be used.
             For checkpointing, gloo CPU-based backend is needed.
@@ -1318,8 +1321,10 @@ class DistributedCheckpointer(_CheckpointerInterface):
         self,
         checkpoint_dir: str,
         output_dir: str,
+        model_type: str,
         process_group: Optional[dist.ProcessGroup] = None,
     ) -> None:
+        self._model_type = ModelType[model_type]
         self._checkpoint_dir = Path(checkpoint_dir)
         self._output_dir = Path(output_dir)
         self._checkpoint_future = None
