@@ -1,7 +1,7 @@
 
 
 
-> ⚠️ **Torchtune is no longer actively maintained:** torchtune development wound down in 2025 — see [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
+> ⚠️ **torchtune is no longer developed.** No new features or bug fixes are planned. PyTorch's LLM training efforts are now centralized in [TorchTitan](https://github.com/pytorch/torchtitan), from pretraining to RL. For fine-tuning (SFT, LoRA), use TorchTitan. For RL, use [TitanRL](https://github.com/pytorch/torchtitan/tree/main/torchtitan/rl), the RL library inside TorchTitan. Background: [The future of torchtune](https://github.com/meta-pytorch/torchtune/issues/2883). Huge thanks to the 150+ contributors who made this library what it was.
 
 # torchtune
 
