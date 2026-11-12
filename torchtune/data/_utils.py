@@ -44,10 +44,17 @@ def truncate(
         list[Any]: truncated list of tokens
 
     Raises:
-        ValueError: if truncation_type is not "left" or "right"
+        ValueError: if truncation_type is not "left" or "right", or if max_seq_len is negative
     """
 
-    if truncation_type == "left":
+    if max_seq_len < 0:
+        raise ValueError(f"max_seq_len must be >= 0, got {max_seq_len}")
+
+    # tokens[-0:] is a no-op in Python (equivalent to tokens[0:]), so left
+    # truncation with max_seq_len=0 would otherwise return the full sequence.
+    if max_seq_len == 0:
+        tokens_truncated = []
+    elif truncation_type == "left":
         tokens_truncated = tokens[-max_seq_len:]  # Take the last max_seq_len tokens
     elif truncation_type == "right":
         tokens_truncated = tokens[:max_seq_len]  # Take the first max_seq_len tokens

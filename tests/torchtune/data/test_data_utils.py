@@ -36,6 +36,13 @@ def test_truncate():
 
     assert truncated_masks == [True, False, True, False]
 
+    # max_seq_len=0 must be empty on both sides; tokens[-0:] would return the full list
+    assert truncate(tokens=tokens, max_seq_len=0, eos_id=-1, truncation_type="right") == []
+    assert truncate(tokens=tokens, max_seq_len=0, eos_id=-1, truncation_type="left") == []
+
+    with pytest.raises(ValueError, match="max_seq_len must be >= 0"):
+        truncate(tokens=tokens, max_seq_len=-1, eos_id=-1)
+
 
 def test_format_content_with_images():
     test_image_1 = Image.new(mode="RGB", size=(4, 4))
