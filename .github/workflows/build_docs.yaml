@@ -56,9 +56,16 @@ jobs:
           path: docs/build/html/
 
   doc-preview:
-    runs-on: [self-hosted, linux.2xlarge]
+    runs-on: mt-l-x86iavx512-8-64
+    container:
+      image: docker.io/python:3.11
     needs: build_docs
-    if: ${{ github.repository_owner == 'pytorch' && github.event_name == 'pull_request' }}
+    # Fork PRs get no OIDC token, so they cannot assume the role the upload needs.
+    if: ${{ github.repository_owner == 'pytorch' && github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.fork == false }}
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,6 +77,12 @@ jobs:
       - name: Add no-index tag
         run: |
           find docs -name "*.html" -print0 | xargs -0 sed -i '/<head>/a \ \ <meta name="robots" content="noindex">';
+      # The S3 write used to come from the EC2 instance role. A pod has none.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: arn:aws:iam::308535385114:role/arc
+          aws-region: us-east-1
       - name: Upload docs preview
         uses: seemethere/upload-artifact-s3@v5
         if: ${{ github.event_name == 'pull_request' }}
