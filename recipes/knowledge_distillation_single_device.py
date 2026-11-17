@@ -50,6 +50,13 @@ class KDRecipeSingleDevice(FTRecipeInterface):
             come at the cost of training performance. In most cases training can slow-down quite a bit as
             a result of this activation recomputation.
 
+        - Activation Offloading. This can be controlled using the ``enable_activation_offloading``
+            flag. Activation offloading reduces memory footprint by offloading activations to the
+            CPU during the forward pass and fetching them back during the backward pass. This usually
+            enables larger batch sizes or models but may increase training time due to data transfer
+            overhead. Offloading can be combined with activation checkpointing for further memory
+            reductions.
+
         - Precision. Full fp32 and bf16 training are supported. Precision is controlled using the ``dtype``
             flag. When ``dtype=bf16``, all activations, gradients and optimizer states are in bfloat16. In
             most cases this should halve the memory footprint of full precision (fp32) training, without
@@ -101,6 +108,8 @@ class KDRecipeSingleDevice(FTRecipeInterface):
     Raises:
         ValueError: If ``dtype`` is set to fp16.
         RuntimeError: If ``dtype`` is set to bf16 and the hardware does not support bf16.
+        RuntimeError: If ``enable_activation_offloading`` is True and device is not CUDA or XPU.
+        RuntimeError: If ``enable_activation_offloading`` is True and ``enable_activation_checkpointing`` is False.
 
     """
 
@@ -145,6 +154,32 @@ class KDRecipeSingleDevice(FTRecipeInterface):
 
         self._checkpoint_client = CheckpointClient(cfg)
         self._enable_async_checkpointing = cfg.get("enable_async_checkpointing", False)
+
+        # Activation checkpointing / offloading
+        self._enable_activation_checkpointing = cfg.get(
+            "enable_activation_checkpointing", False
+        )
+        self._enable_activation_offloading = cfg.get(
+            "enable_activation_offloading", False
+        )
+        if self._enable_activation_offloading:
+            if self._device.type != "cuda" and self._device.type != "xpu":
+                raise RuntimeError(
+                    "enable_activation_offloading should only be True when training on CUDA or XPU"
+                )
+            if not self._enable_activation_checkpointing:
+                raise RuntimeError(
+                    "enable_activation_offloading should only be True when enable_activation_checkpointing is True"
+                )
+        elif (
+            self._enable_activation_checkpointing
+            and cfg.checkpointer.model_type != "LLAMA3_VISION"
+        ):
+            utils.log_rank_zero(
+                self._logger,
+                "Hint: enable_activation_checkpointing is True, but enable_activation_offloading isn't. "
+                "Enabling activation offloading should reduce memory further.",
+            )
 
     def load_teacher_checkpoint(self, cfg: DictConfig) -> dict[str, Any]:
         """
@@ -225,7 +260,8 @@ class KDRecipeSingleDevice(FTRecipeInterface):
         # set up model
         self._model = self._setup_model(
             cfg_model=cfg.model,
-            enable_activation_checkpointing=cfg.enable_activation_checkpointing,
+            enable_activation_checkpointing=self._enable_activation_checkpointing,
+            enable_activation_offloading=self._enable_activation_offloading,
             compile_model=cfg.compile,
             base_model_state_dict=checkpoint_dict[training.MODEL_KEY],
             lora_weights_state_dict=(
@@ -380,6 +416,7 @@ class KDRecipeSingleDevice(FTRecipeInterface):
         self,
         cfg_model: DictConfig,
         enable_activation_checkpointing: bool,
+        enable_activation_offloading: bool,
         compile_model: bool,
         base_model_state_dict: dict[str, Any],
         lora_weights_state_dict: Optional[dict[str, Any]] = None,
@@ -455,6 +492,12 @@ class KDRecipeSingleDevice(FTRecipeInterface):
             training.log_memory_stats(
                 memory_stats, message="Memory stats after student model init:"
             )
+
+        # Enable activation offloading
+        self._act_offloading_ctx = training.get_act_offloading_ctx_manager(
+            model, enable_activation_offloading
+        )
+
         return model
 
     def _setup_teacher_model(
@@ -599,7 +642,8 @@ class KDRecipeSingleDevice(FTRecipeInterface):
         input_pos = batch.get("input_pos", None)  # shape [b, s]
 
         # run model
-        logits = self._model(tokens, mask=mask, input_pos=input_pos)
+        with self._act_offloading_ctx:
+            logits = self._model(tokens, mask=mask, input_pos=input_pos)
 
         # Compute teacher logits
         with torch.no_grad():
