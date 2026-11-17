@@ -49,6 +49,8 @@ jobs:
       os: linux
       test-infra-repository: pytorch/test-infra
       test-infra-ref: main
+      # OSDC (ARC) runners. meta-pytorch uses the regular ones on every ref.
+      runner-fleet: osdc
       with-cuda: enable
       with-rocm: enable
       with-xpu: enable
