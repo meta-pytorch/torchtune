@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import contextlib
-from typing import Any, Generator, Literal, Optional, Protocol, runtime_checkable, Union
+from typing import Any, Generator, Literal, Optional, Protocol, Union, get_args, runtime_checkable
 
 import torch
 import torch.distributed as dist
@@ -104,6 +104,14 @@ def get_lora_module_names(
     Returns:
         list[str]: list of module names in the model that have LoRA applied.
     """
+    supported_modules = set(get_args(LORA_ATTN_MODULES))
+    invalid_modules = set(lora_attn_modules) - supported_modules
+    if invalid_modules:
+        raise ValueError(
+            f"Unsupported LoRA attention modules: {sorted(invalid_modules)}. "
+            f"Expected one or more of {sorted(supported_modules)}."
+        )
+
     lora_module_keys = lora_attn_modules
     if apply_lora_to_mlp:
         lora_module_keys = lora_module_keys + ["w1", "w2", "w3"]

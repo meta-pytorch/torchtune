@@ -17,6 +17,7 @@ from torchtune.modules.peft import (
     DoRALinear,
     get_adapter_params,
     get_adapter_state_dict,
+    get_lora_module_names,
     get_merged_lora_ckpt,
     LoRALinear,
     set_trainable_params,
@@ -186,6 +187,39 @@ def lora_llama2_expected_base_model_keys():
         max_seq_len=MAX_SEQ_LEN,
     )
     return base_model.state_dict().keys()
+
+
+class TestGetLoraModuleNames:
+    def test_valid_lora_attn_modules(self):
+        assert get_lora_module_names(
+            lora_attn_modules=["q_proj", "v_proj"],
+            apply_lora_to_mlp=False,
+            apply_lora_to_output=False,
+        ) == ["q_proj", "v_proj"]
+
+    def test_unknown_lora_attn_module_raises(self):
+        with pytest.raises(ValueError, match="Unsupported LoRA attention modules"):
+            get_lora_module_names(
+                lora_attn_modules=["not_a_projection"],
+                apply_lora_to_mlp=False,
+                apply_lora_to_output=False,
+            )
+
+    def test_quote_corrupted_lora_attn_module_raises(self):
+        with pytest.raises(ValueError, match="'q_proj'"):
+            get_lora_module_names(
+                lora_attn_modules=["'q_proj'"],
+                apply_lora_to_mlp=False,
+                apply_lora_to_output=False,
+            )
+
+    def test_partially_invalid_lora_attn_modules_raises(self):
+        with pytest.raises(ValueError, match="typo"):
+            get_lora_module_names(
+                lora_attn_modules=["q_proj", "typo"],
+                apply_lora_to_mlp=False,
+                apply_lora_to_output=False,
+            )
 
 
 class TestPeftUtils:
