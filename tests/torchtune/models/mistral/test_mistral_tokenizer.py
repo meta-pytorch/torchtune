@@ -96,3 +96,14 @@ class TestMistralTokenizer:
         expected_mask = [True] * 75 + [False] * 124
         assert expected_tokens == tokens
         assert expected_mask == mask
+
+    def test_call_drops_eos_for_inference(self, messages, expected_tokens):
+        tokenizer = self.tokenizer(template=False)
+
+        train_sample = tokenizer({"messages": messages.copy()})
+        inference_sample = tokenizer({"messages": messages.copy()}, inference=True)
+
+        assert train_sample["tokens"] == expected_tokens
+        assert train_sample["mask"] == [True] * 75 + [False] * 125
+        assert inference_sample["tokens"] == expected_tokens[:-1]
+        assert inference_sample["mask"] == [True] * 75 + [False] * 124
