@@ -24,7 +24,10 @@ defaults:
 jobs:
   gpu_test:
     if: github.repository_owner == 'pytorch'
-    runs-on: linux.g5.12xlarge.nvidia.gpu
+    runs-on: mt-l-x86aavx2-45-167-a10g-4
+    # OSDC runners have no host toolchain, so the job runs in this image.
+    container:
+      image: pytorch/almalinux-builder:cuda12.6
     strategy:
       matrix:
         python-version: ['3.9', '3.10', '3.11']
