@@ -297,6 +297,10 @@ class _LLMEvalWrapper(HFLM):
         batch_size (int): The batch size per GPU to use.
         dtype (torch.dtype): dtype for the model caches during generation.
         enable_kv_cache (bool): Whether to enable KV cache for generation.
+        max_gen_toks (int): Maximum number of tokens to generate per sample.
+            Default 256 matches the lm-eval harness default. Individual tasks
+            may request a larger budget via ``gen_kwargs``; see
+            ``_model_generate`` for how task-specific limits are respected.
     """
 
     def __init__(
@@ -309,6 +313,7 @@ class _LLMEvalWrapper(HFLM):
         batch_size: int = 8,
         dtype: torch.dtype = torch.float32,
         enable_kv_cache: bool = True,
+        max_gen_toks: int = 256,
     ):
         # TODO (@joecummings): Remove this init function so we don't load in extraneous stuff
         super().__init__(pretrained="gpt2", device=str(device))
@@ -318,6 +323,7 @@ class _LLMEvalWrapper(HFLM):
         self._batch_size = batch_size
         self._dtype = dtype
         self._enable_kv_cache = enable_kv_cache
+        self._max_gen_toks = max_gen_toks
         # Set device explicitely here since HPU is not included in
         # `device_list` in `HFLM` class
         self._device = torch.device(device)
@@ -336,7 +342,7 @@ class _LLMEvalWrapper(HFLM):
 
     @property
     def max_gen_toks(self):
-        return 256
+        return self._max_gen_toks
 
     @property
     def batch_size(self):
@@ -414,6 +420,13 @@ class _LLMEvalWrapper(HFLM):
                 "Any decoding strategy other than greedy is not supported."
             )
 
+        # The harness passes max_length = context_len + task_max_gen_toks,
+        # which may differ from self.max_gen_toks when a task requests a
+        # larger generation budget.  Derive the token budget from it so
+        # task-specific limits are respected.
+        max_length = generation_kwargs.get("max_length", seq_len + self.max_gen_toks)
+        max_generated_tokens = max_length - seq_len
+
         # if we've recieved fewer than self._batch_size samples in the current
         # batch we need to pad the batch out. here we're padding the end of the
         # current batch to the correct length. this is because when we use static
@@ -433,7 +446,7 @@ class _LLMEvalWrapper(HFLM):
             toks, _ = generate(
                 self.model,
                 maybe_padded_context,
-                max_generated_tokens=self.max_gen_toks,
+                max_generated_tokens=max_generated_tokens,
                 temperature=temperature,
                 top_k=None,
                 pad_id=self._tokenizer.pad_id,
@@ -483,6 +496,7 @@ class EleutherEvalRecipe(EvalRecipeInterface):
         self.tasks = list(cfg.tasks)
         self.batch_size = cfg.batch_size
         self.enable_kv_cache = cfg.get("enable_kv_cache", True)
+        self.max_gen_toks = cfg.get("max_gen_toks", 256)
         self.include_path = cfg.get("include_path", None)
         self.apply_chat_template = cfg.get("chat_template", False)
 
@@ -546,14 +560,19 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 )
         elif isinstance(model, TransformerDecoder):
             eleuther_model_wrapper = _LLMEvalWrapper
-        self.eleuther_model_wrapper = eleuther_model_wrapper(
-            model,
-            model_transform,
+        wrapper_kwargs = dict(
             device=self.device,
             max_seq_length=cfg.max_seq_length,
             batch_size=self.batch_size,
             dtype=self.dtype,
             enable_kv_cache=self.enable_kv_cache,
+        )
+        if eleuther_model_wrapper is _LLMEvalWrapper:
+            wrapper_kwargs["max_gen_toks"] = self.max_gen_toks
+        self.eleuther_model_wrapper = eleuther_model_wrapper(
+            model,
+            model_transform,
+            **wrapper_kwargs,
         )
 
     def evaluate(self) -> None:
