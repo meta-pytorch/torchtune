@@ -118,6 +118,7 @@ class TestDistributedCheckpointer:
         return DistributedCheckpointer(
             checkpoint_dir=tmp_path,
             output_dir=tmp_path,
+            model_type="LLAMA3",
         )
 
     def test_save_load_checkpoint(
