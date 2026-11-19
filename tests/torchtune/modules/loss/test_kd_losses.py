@@ -147,6 +147,29 @@ class TestForwardKLWithChunkedOutputLoss:
         assert_expected(standard_loss, expected_loss, rtol=1e-2, atol=1e-2)
 
 
+class TestReverseKLLoss:
+    def test_shared_masked_vocabulary_gradients(self):
+        student_logits = torch.tensor([[1.0, 2.0, -torch.inf]], requires_grad=True)
+        teacher_logits = torch.tensor([[2.0, 1.0, -torch.inf]])
+        loss = ReverseKLLoss()(student_logits, teacher_logits, torch.tensor([1]))
+        loss.backward()
+
+        reference_logits = torch.tensor([[1.0, 2.0]], requires_grad=True)
+        reference_probs = reference_logits.softmax(dim=-1)
+        reference_loss = (
+            reference_probs
+            * (
+                reference_logits.log_softmax(dim=-1)
+                - teacher_logits[:, :2].log_softmax(dim=-1)
+            )
+        ).sum()
+        reference_loss.backward()
+
+        torch.testing.assert_close(loss, reference_loss)
+        torch.testing.assert_close(student_logits.grad[:, :2], reference_logits.grad)
+        torch.testing.assert_close(student_logits.grad[:, 2], torch.zeros(1))
+
+
 class TestReverseKLWithChunkedOutputLoss:
     def test_reverse_kl_loss(self):
         # Create a sample input and label
