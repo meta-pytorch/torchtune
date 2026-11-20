@@ -39,13 +39,28 @@ class ConcatDataset(Dataset):
         ValueError: if a mix of `PackedDataset` and non-`PackedDataset` datasets is provided
 
     Examples:
-        >>> dataset1 = MyCustomDataset(params1)
-        >>> dataset2 = MyCustomDataset(params2)
-        >>> concat_dataset = ConcatDataset([dataset1, dataset2])
-        >>> print(len(concat_dataset))  # Total length of both datasets
-        >>> data_point = concat_dataset[1500]  # Accesses an element from the appropriate dataset
+        Build each sub-dataset with the same tokenizer. The tokenizer must be passed to every
+        dataset builder, since each builder tokenizes its own source independently::
 
-    This can also be accomplished by passing in a list of datasets to the YAML config::
+            >>> from torchtune.datasets import ConcatDataset, grammar_dataset, instruct_dataset
+            >>> # tokenizer is e.g. get_tokenizer("Llama3-8B") with max_seq_len set
+            >>> alpaca = instruct_dataset(tokenizer=tokenizer, source="vicgalle/alpaca-gpt4", split="train")
+            >>> grammar = grammar_dataset(tokenizer=tokenizer, split="train")
+            >>> concat_dataset = ConcatDataset([alpaca, grammar])
+            >>> len(concat_dataset) == len(alpaca) + len(grammar)
+            True
+            >>> element = concat_dataset[1500]  # routed to the correct sub-dataset
+
+        ``packing`` is controlled per builder but must be consistent across all sub-datasets: either
+        every dataset sets ``packed=True`` or none do. Mixing packed and unpacked datasets raises
+        :class:`ValueError` because their sample structures differ::
+
+            >>> packed = instruct_dataset(tokenizer=tokenizer, source="vicgalle/alpaca-gpt4", packed=True)
+            >>> ConcatDataset([alpaca, packed])  # doctest: +SKIP
+            ValueError: ConcatDataset can't process a mix of packed and non-packed datasets.
+
+    The same can be expressed in a YAML config. Pass the tokenizer to each builder and keep
+    ``packed`` identical for every entry::
 
         dataset:
           - _component_: torchtune.datasets.instruct_dataset
@@ -57,6 +72,9 @@ class ConcatDataset(Dataset):
             split: train[:1%]
             train_on_input: False
             packed: True
+
+    For an end-to-end walkthrough of combining and packing datasets, see
+    :ref:`datasets_overview` in the datasets guide.
 
     This class primarily focuses on providing a unified interface to access elements from multiple datasets,
     enhancing the flexibility in handling diverse data sources for training machine learning models.
