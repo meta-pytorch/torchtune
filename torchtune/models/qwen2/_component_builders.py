@@ -21,7 +21,12 @@ from torchtune.modules import (
 )
 
 
-from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
+from torchtune.modules.peft import (
+    DoRALinear,
+    LORA_ATTN_MODULES,
+    LoRALinear,
+    LoRATiedLinear,
+)
 
 """
 Component builders for the Qwen2 model and popular variants such as LoRA.
@@ -226,9 +231,6 @@ def lora_qwen2(
         TransformerDecoder: Instantiation of Qwen2 model with LoRA applied to
         a subset of the attention projections in each layer.
 
-    Raises:
-        ValueError: if ``apply_lora_to_output`` and ``tie_word_embeddings``.
-
     """
     layers = nn.ModuleList()
     for _ in range(num_layers):
@@ -278,12 +280,18 @@ def lora_qwen2(
     tok_embeddings = nn.Embedding(vocab_size, embed_dim)
 
     if tie_word_embeddings:
-        if apply_lora_to_output:
+        if apply_lora_to_output and use_dora:
             raise ValueError(
-                "apply_lora_to_output is incompatible with tie_word_embeddings,"
-                " as there would be no output to apply lora to!"
+                "DoRA is not supported for the tied output projection. "
+                "Set use_dora=False to apply LoRA to the output projection."
             )
-        output_proj = TiedLinear(tok_embeddings)
+        output_proj = (
+            LoRATiedLinear(
+                tok_embeddings, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout
+            )
+            if apply_lora_to_output
+            else TiedLinear(tok_embeddings)
+        )
     else:
         # TODO: quantize_base is not applied to final output_proj currently.
         adapter_cls = DoRALinear if use_dora else LoRALinear

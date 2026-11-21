@@ -236,6 +236,15 @@ def get_merged_lora_ckpt(
                 del state_dict[f"{module}.lora_{param}_b"]
             continue
 
+        if f"{module}.weight" not in state_dict:
+            raise ValueError(
+                f"Cannot merge LoRA weights for '{module}': it has no base "
+                "weight in the state dict, so its base weight is tied to "
+                "another module (for example the token embeddings). Folding "
+                "the adapter into the shared weight would corrupt it. "
+                "Untie the weights on export instead."
+            )
+
         lora_a_weight = state_dict[f"{module}.lora_a.weight"]
         lora_b_weight = state_dict[f"{module}.lora_b.weight"]
         lora_magnitude = state_dict.get(f"{module}.magnitude", None)

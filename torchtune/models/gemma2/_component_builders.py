@@ -21,7 +21,12 @@ from torchtune.models.gemma2._attention import Gemma2Attention
 from torchtune.models.gemma.rms_norm import GemmaRMSNorm
 from torchtune.modules import TransformerDecoder, TiedLinear
 from torchtune.models.gemma.gemma_norm_embedding import GemmaNormEmbeddings
-from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
+from torchtune.modules.peft import (
+    DoRALinear,
+    LORA_ATTN_MODULES,
+    LoRALinear,
+    LoRATiedLinear,
+)
 from torchtune.models.gemma._component_builders import gemma_mlp, lora_gemma_mlp
 
 """
@@ -169,6 +174,7 @@ def gemma2(
 def lora_gemma2(
     lora_attn_modules: list[LORA_ATTN_MODULES],
     apply_lora_to_mlp: bool = False,
+    apply_lora_to_output: bool = False,
     *,
     # gemma args
     vocab_size: int,
@@ -195,13 +201,14 @@ def lora_gemma2(
 ) -> TransformerDecoder:
     """
     Return a version of Gemma with LoRA applied based on the passed in configuration.
-    Note: output projection lora is not supported because it is tied to token embeddings
 
     Args:
         lora_attn_modules (list[LORA_ATTN_MODULES]): list of which linear layers
             LoRA should be applied to in each self-attention block. Options are
             ``{"q_proj", "k_proj", "v_proj", "output_proj"}``.
         apply_lora_to_mlp (bool): whether to apply LoRA to the MLP in each transformer layer.
+            Default: False
+        apply_lora_to_output (bool): whether to apply LoRA to the model's final output projection.
             Default: False
         vocab_size (int): number of tokens in vocabulary.
         num_layers (int): number of layers in the transformer decoder.
@@ -231,7 +238,18 @@ def lora_gemma2(
     """
 
     tok_embeddings = GemmaNormEmbeddings(vocab_size, embed_dim)
-    output_proj = TiedLinear(tok_embeddings)
+    if apply_lora_to_output and use_dora:
+        raise ValueError(
+            "DoRA is not supported for the tied output projection. "
+            "Set use_dora=False to apply LoRA to the output projection."
+        )
+    output_proj = (
+        LoRATiedLinear(
+            tok_embeddings, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout
+        )
+        if apply_lora_to_output
+        else TiedLinear(tok_embeddings)
+    )
     
     layers = nn.ModuleList()
     for layer_idx in range(num_layers):

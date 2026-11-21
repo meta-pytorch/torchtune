@@ -9,12 +9,13 @@ from functools import partial
 import pytest
 
 import torch
-from tests.test_utils import fixed_init_model, mps_ignored_test
+import torch.nn.functional as F
+from tests.test_utils import assert_expected, fixed_init_model, mps_ignored_test
 from torch import nn
 from torchao.quantization import NF4Tensor, to_nf4
 from torchtune import training
 from torchtune.modules.common_utils import reparametrize_as_dtype_state_dict_post_hook
-from torchtune.modules.peft import LoRALinear, QATLoRALinear
+from torchtune.modules.peft import LoRALinear, LoRATiedLinear, QATLoRALinear
 from torchtune.training.seed import set_seed
 
 
@@ -250,3 +251,61 @@ class TestLoRALinear:
             ValueError, match="Bias is not supported in QAT \\+ LoRA yet"
         ):
             QATLoRALinear.from_lora_linear(lora_linear_with_bias)
+
+
+class TestLoRATiedLinear:
+    @pytest.fixture
+    def tied_module(self) -> nn.Embedding:
+        torch.manual_seed(0)
+        return nn.Embedding(128, 64)
+
+    @pytest.fixture
+    def inputs(self) -> torch.Tensor:
+        torch.manual_seed(1)
+        return torch.randn(2, 8, 64)
+
+    def test_disabled_matches_base_projection(self, tied_module, inputs):
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        module.disabled = True
+        expected = F.linear(inputs, tied_module.weight)
+        assert_expected(module(inputs), expected)
+
+    def test_lora_branch_is_zero_at_init(self, tied_module, inputs):
+        # lora_b is zero-initialised, so the adapter contributes nothing
+        # before training.
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        expected = F.linear(inputs, tied_module.weight)
+        assert_expected(module(inputs), expected)
+
+    def test_lora_branch_changes_output(self, tied_module, inputs):
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        base = F.linear(inputs, tied_module.weight)
+        with torch.no_grad():
+            module.lora_b.weight.fill_(1.0)
+        assert not torch.allclose(module(inputs), base)
+
+    def test_weight_is_the_tied_weight(self, tied_module):
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        assert module.weight is tied_module.weight
+
+    def test_tied_weight_is_read_live(self, tied_module, inputs):
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        module.disabled = True
+        before = module(inputs)
+        with torch.no_grad():
+            tied_module.weight.mul_(2.0)
+        after = module(inputs)
+        assert not torch.allclose(before, after)
+        assert_expected(after, before * 2.0)
+
+    def test_state_dict_has_no_base_weight(self, tied_module):
+        module = LoRATiedLinear(tied_module, rank=4, alpha=8.0)
+        assert set(module.state_dict().keys()) == {
+            "lora_a.weight",
+            "lora_b.weight",
+        }
+        assert module.adapter_params() == ["lora_a.weight", "lora_b.weight"]
+
+    def test_init_without_weight_raises(self):
+        with pytest.raises(AttributeError, match="does not have attribute 'weight'"):
+            LoRATiedLinear(nn.Dropout(), rank=4, alpha=8.0)
