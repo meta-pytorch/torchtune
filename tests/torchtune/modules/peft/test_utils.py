@@ -520,3 +520,13 @@ class TestDisableAdapter:
 
         assert model_lora[0].disabled is False
         torch.testing.assert_close(ori_outputs, lora_outputs)
+
+
+def test_get_merged_lora_ckpt_tied_output_raises():
+    state_dict = {
+        "tok_embeddings.weight": torch.randn(128, 64),
+        "output.lora_a.weight": torch.randn(4, 64),
+        "output.lora_b.weight": torch.randn(128, 4),
+    }
+    with pytest.raises(ValueError, match="no base weight"):
+        get_merged_lora_ckpt(state_dict, rank=4, alpha=8.0)

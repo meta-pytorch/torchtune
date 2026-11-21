@@ -34,6 +34,7 @@ model:
   _component_: torchtune.models.gemma2.lora_gemma2_2b
   lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
   apply_lora_to_mlp: True
+  apply_lora_to_output: False
   lora_rank: 64  # higher increases accuracy and memory
   lora_alpha: 128  # usually alpha=2*rank
   lora_dropout: 0.0

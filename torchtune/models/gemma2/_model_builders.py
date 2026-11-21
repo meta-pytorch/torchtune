@@ -44,6 +44,7 @@ def gemma2_2b() -> TransformerDecoder:
 def lora_gemma2_2b(
     lora_attn_modules: list[LORA_ATTN_MODULES],
     apply_lora_to_mlp: bool = False,
+    apply_lora_to_output: bool = False,
     lora_rank: int = 8,
     lora_alpha: float = 16,
     lora_dropout: float = 0.0,
@@ -63,6 +64,8 @@ def lora_gemma2_2b(
             ``{"q_proj", "k_proj", "v_proj", "output_proj"}``.
         apply_lora_to_mlp (bool): whether to apply LoRA to the MLP in each transformer layer.
             Default: False
+        apply_lora_to_output (bool): whether to apply LoRA to the model's final output projection.
+            Default: False
         lora_rank (int): rank of each low-rank approximation
         lora_alpha (float): scaling factor for the low-rank approximation
         lora_dropout (float): dropout probability for the low-rank approximation. Default: 0.0
@@ -76,6 +79,7 @@ def lora_gemma2_2b(
     return lora_gemma2(
         lora_attn_modules=lora_attn_modules,
         apply_lora_to_mlp=apply_lora_to_mlp,
+        apply_lora_to_output=apply_lora_to_output,
         vocab_size=256_000,
         num_layers=26,
         num_heads=8,
@@ -134,6 +138,7 @@ def gemma2_9b() -> TransformerDecoder:
 def lora_gemma2_9b(
     lora_attn_modules: list[LORA_ATTN_MODULES],
     apply_lora_to_mlp: bool = False,
+    apply_lora_to_output: bool = False,
     lora_rank: int = 8,
     lora_alpha: float = 16,
     lora_dropout: float = 0.0,
@@ -153,6 +158,8 @@ def lora_gemma2_9b(
             ``{"q_proj", "k_proj", "v_proj", "output_proj"}``.
         apply_lora_to_mlp (bool): whether to apply LoRA to the MLP in each transformer layer.
             Default: False
+        apply_lora_to_output (bool): whether to apply LoRA to the model's final output projection.
+            Default: False
         lora_rank (int): rank of each low-rank approximation
         lora_alpha (float): scaling factor for the low-rank approximation
         lora_dropout (float): dropout probability for the low-rank approximation. Default: 0.0
@@ -166,6 +173,7 @@ def lora_gemma2_9b(
     return lora_gemma2(
         lora_attn_modules=lora_attn_modules,
         apply_lora_to_mlp=apply_lora_to_mlp,
+        apply_lora_to_output=apply_lora_to_output,
         vocab_size=256_000,
         num_layers=42,
         num_heads=16,

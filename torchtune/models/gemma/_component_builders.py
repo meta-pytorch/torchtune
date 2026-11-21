@@ -18,7 +18,12 @@ from torchtune.modules import (
 from torchtune.models.gemma.rms_norm import GemmaRMSNorm
 from torchtune.modules import TransformerDecoder, TiedLinear
 from torchtune.models.gemma.gemma_norm_embedding import GemmaNormEmbeddings
-from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
+from torchtune.modules.peft import (
+    DoRALinear,
+    LORA_ATTN_MODULES,
+    LoRALinear,
+    LoRATiedLinear,
+)
 
 """
 Component builders for the Gemma 2B models and popular variants such as LoRA.
@@ -133,6 +138,7 @@ def gemma_mlp(dim: int, hidden_dim: int, quantize_base: bool = False) -> FeedFor
 def lora_gemma(
     lora_attn_modules: list[LORA_ATTN_MODULES],
     apply_lora_to_mlp: bool = False,
+    apply_lora_to_output: bool = False,
     *,
     # gemma args
     vocab_size: int,
@@ -155,13 +161,14 @@ def lora_gemma(
 ) -> TransformerDecoder:
     """
     Return a version of Gemma with LoRA applied based on the passed in configuration.
-    Note: output projection lora is not supported because it is tied to token embeddings
 
     Args:
         lora_attn_modules (list[LORA_ATTN_MODULES]): list of which linear layers
             LoRA should be applied to in each self-attention block. Options are
             ``{"q_proj", "k_proj", "v_proj", "output_proj"}``.
         apply_lora_to_mlp (bool): whether to apply LoRA to the MLP in each transformer layer.
+            Default: False
+        apply_lora_to_output (bool): whether to apply LoRA to the model's final output projection.
             Default: False
         vocab_size (int): number of tokens in vocabulary.
         num_layers (int): number of layers in the transformer decoder.
@@ -229,7 +236,18 @@ def lora_gemma(
         layers.append(layer)
 
     tok_embeddings = GemmaNormEmbeddings(vocab_size, embed_dim)
-    output_proj = TiedLinear(tok_embeddings)
+    if apply_lora_to_output and use_dora:
+        raise ValueError(
+            "DoRA is not supported for the tied output projection. "
+            "Set use_dora=False to apply LoRA to the output projection."
+        )
+    output_proj = (
+        LoRATiedLinear(
+            tok_embeddings, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout
+        )
+        if apply_lora_to_output
+        else TiedLinear(tok_embeddings)
+    )
     model = TransformerDecoder(
         tok_embeddings=tok_embeddings,
         layers=layers,

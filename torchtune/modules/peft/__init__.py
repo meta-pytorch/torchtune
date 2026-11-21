@@ -16,13 +16,14 @@ from ._utils import (  # noqa
     validate_missing_and_unexpected_for_lora,
 )
 from .dora import DoRALinear
-from .lora import LoRALinear, QATLoRALinear, TrainableParams
+from .lora import LoRALinear, LoRATiedLinear, QATLoRALinear, TrainableParams
 
 
 __all__ = [
     "AdapterModule",
     "DoRALinear",
     "LoRALinear",
+    "LoRATiedLinear",
     "QATLoRALinear",
     "get_adapter_params",
     "set_trainable_params",

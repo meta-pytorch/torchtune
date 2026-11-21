@@ -23,7 +23,12 @@ from torchtune.modules import (
 
 from torchtune.modules.common_utils import reparametrize_as_dtype_state_dict_post_hook
 
-from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
+from torchtune.modules.peft import (
+    DoRALinear,
+    LORA_ATTN_MODULES,
+    LoRALinear,
+    LoRATiedLinear,
+)
 
 """
 Component builders for the Llama3.2 model and popular variants such as LoRA.
@@ -258,15 +263,28 @@ def lora_llama3_2(
         
     tok_embeddings = nn.Embedding(vocab_size, embed_dim)
 
-    if apply_lora_to_output:
-        raise ValueError(
-            "apply_lora_to_output is currently not supporting in llama3.2 1b and 3b,"
-            "as the projection layer weights are tied to the embeddings"
-        )
     if tie_word_embeddings:
-        output_proj = TiedLinear(tok_embeddings)
+        if apply_lora_to_output and use_dora:
+            raise ValueError(
+                "DoRA is not supported for the tied output projection in "
+                "llama3.2 1b and 3b. Set use_dora=False to apply LoRA to "
+                "the output projection."
+            )
+        output_proj = (
+            LoRATiedLinear(
+                tok_embeddings, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout
+            )
+            if apply_lora_to_output
+            else TiedLinear(tok_embeddings)
+        )
     else:
-        output_proj = nn.Linear(embed_dim, vocab_size, bias=False)
+        # TODO: quantize_base is not applied to final output_proj currently.
+        adapter_cls = DoRALinear if use_dora else LoRALinear
+        output_proj = (
+            adapter_cls(embed_dim, vocab_size, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout)
+            if apply_lora_to_output
+            else nn.Linear(embed_dim, vocab_size, bias=False)
+        )
         
     model = TransformerDecoder(
         tok_embeddings=tok_embeddings,

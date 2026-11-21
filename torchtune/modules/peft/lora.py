@@ -147,6 +147,116 @@ class LoRALinear(nn.Module, AdapterModule):
         return out + lora_out
 
 
+class LoRATiedLinear(nn.Module, AdapterModule):
+    """LoRA linear layer whose base weight is tied to another module.
+
+    Like :class:`~torchtune.modules.peft.LoRALinear`, except the base weight
+    is not owned by this module: it is the shared weight of ``tied_module``
+    (usually the token embeddings), read live in ``forward``. Only the
+    low-rank matrices ``lora_a`` and ``lora_b`` are owned parameters, so
+    the base weight is never duplicated in the state dict and FSDP
+    flat-param / DTensor sharding is untouched.
+
+    The tied module is held via ``object.__setattr__`` so it is NOT
+    registered as a submodule. Registering it would add a second copy of
+    the shared weight (``output.tied_module.weight``) to the state dict and
+    break weight tying under FSDP. Reading ``tied_module.weight`` in
+    ``forward`` keeps working after FSDP wraps the model, because the
+    module object itself does not change, only the weight pointer does.
+
+    Merging the adapter into the base weight is not supported: folding
+    ``lora_b @ lora_a`` into the shared weight would silently change the
+    input token embeddings as well. See
+    :func:`~torchtune.modules.peft.get_merged_lora_ckpt`, which raises
+    for this case. Untie the weights on export instead.
+
+    Args:
+        tied_module (nn.Module): The module whose weight is shared. Only
+            the weight is used. Must have an attribute ``weight``.
+        rank (int): rank of the low-rank approximation
+        alpha (float): scaling factor for the low-rank approximation
+        dropout (float): dropout probability. Default: 0.0
+
+    Raises:
+        AttributeError: If the provided module does not have an attribute
+            'weight'.
+    """
+
+    def __init__(
+        self,
+        tied_module: nn.Module,
+        rank: int,
+        alpha: float,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        if not hasattr(tied_module, "weight"):
+            raise AttributeError(
+                "Provided module does not have attribute 'weight'. "
+                "Please check your tied_module."
+            )
+        self.in_dim = tied_module.weight.shape[1]
+        self.out_dim = tied_module.weight.shape[0]
+        self.rank = rank
+        self.alpha = alpha
+        self.scaling = alpha / rank
+        # See class docstring: do not register the tied module.
+        object.__setattr__(self, "tied_module", tied_module)
+        # 'self.disabled' is a flag showing whether to turn off LoRA adapters,
+        # this can be used in DPO for treating the lora adapters as the policy model
+        # and disabling it to treat the base model as the reference model
+        self.disabled = False
+        self.dropout = nn.Dropout(p=dropout) if dropout > 0.0 else nn.Identity()
+        self.lora_a = nn.Linear(in_features=self.in_dim, out_features=rank, bias=False)
+        self.lora_b = nn.Linear(in_features=rank, out_features=self.out_dim, bias=False)
+        self.merged = False
+        self.initialize_parameters()
+
+    @property
+    def weight(self) -> torch.Tensor:
+        """The shared base weight. Always identical to the tied weight."""
+        return self.tied_module.weight
+
+    def to_empty(
+        self, *, device: Optional[Union[str, torch.device, int]], recurse: bool = True
+    ):
+        self.lora_a.to_empty(device=device, recurse=recurse)
+        self.lora_b.to_empty(device=device, recurse=recurse)
+
+    def initialize_parameters(self):
+        # Initialize as in
+        # https://github.com/microsoft/LoRA/blob/4c0333854cb905966f8cc4e9a74068c1e507c7b7/loralib/layers.py#L119
+        _lora_a_init_params(self.lora_a)
+        _lora_b_init_params(self.lora_b)
+
+    def adapter_params(self) -> list[str]:
+        """
+        Return a list of strings corresponding to the names of the ``nn.Parameter`` s in
+        the model coming from the adapter.
+
+        For LoRA this means lora_a.weight and lora_b.weight.
+        """
+        # NOTE: this function has to be updated if the names of "lora_a" and "lora_b"
+        # in this module change.
+        adapter_params = ["lora_a.weight", "lora_b.weight"]
+        return adapter_params
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor): input tensor with shape ``(..., in_dim)``
+
+        Returns:
+            torch.Tensor: output tensor with shape ``(..., out_dim)``
+        """
+        out = F.linear(x, self.tied_module.weight)
+        if self.disabled:
+            return out
+        lora_out = self.lora_a(self.dropout(x))
+        lora_out = self.scaling * self.lora_b(lora_out)
+        return out + lora_out
+
+
 class QATLoRALinear(LoRALinear):
     """
     LoRA linear layer with quantization-aware training (QAT) applied to the
