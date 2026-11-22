@@ -297,6 +297,8 @@ class _LLMEvalWrapper(HFLM):
         batch_size (int): The batch size per GPU to use.
         dtype (torch.dtype): dtype for the model caches during generation.
         enable_kv_cache (bool): Whether to enable KV cache for generation.
+        max_gen_toks (int): Default maximum number of tokens to generate if not specified
+            by the evaluation task. Default is 256.
     """
 
     def __init__(
@@ -309,6 +311,7 @@ class _LLMEvalWrapper(HFLM):
         batch_size: int = 8,
         dtype: torch.dtype = torch.float32,
         enable_kv_cache: bool = True,
+        max_gen_toks: int = 256,
     ):
         # TODO (@joecummings): Remove this init function so we don't load in extraneous stuff
         super().__init__(pretrained="gpt2", device=str(device))
@@ -318,6 +321,7 @@ class _LLMEvalWrapper(HFLM):
         self._batch_size = batch_size
         self._dtype = dtype
         self._enable_kv_cache = enable_kv_cache
+        self._max_gen_toks = max_gen_toks
         # Set device explicitely here since HPU is not included in
         # `device_list` in `HFLM` class
         self._device = torch.device(device)
@@ -336,7 +340,7 @@ class _LLMEvalWrapper(HFLM):
 
     @property
     def max_gen_toks(self):
-        return 256
+        return self._max_gen_toks
 
     @property
     def batch_size(self):
@@ -423,6 +427,11 @@ class _LLMEvalWrapper(HFLM):
             (0, 0, 0, self._batch_size - bsz),
             value=self._tokenizer.eos_id,  # pad with one of the tokenizer's stop tokens so generation can stop early
         )
+        max_generated_tokens = generation_kwargs.get(
+            "max_gen_toks",
+            generation_kwargs.get("max_new_tokens", self.max_gen_toks),
+        )
+
         with local_kv_cache(
             self.model,
             batch_size=self.batch_size,
@@ -433,7 +442,7 @@ class _LLMEvalWrapper(HFLM):
             toks, _ = generate(
                 self.model,
                 maybe_padded_context,
-                max_generated_tokens=self.max_gen_toks,
+                max_generated_tokens=max_generated_tokens,
                 temperature=temperature,
                 top_k=None,
                 pad_id=self._tokenizer.pad_id,
@@ -537,6 +546,7 @@ class EleutherEvalRecipe(EvalRecipeInterface):
         model_transform = config.instantiate(cfg.tokenizer)
 
         # Finally, we setup the actual EvalWrapper class
+        extra_kwargs = {}
         if isinstance(model, DeepFusionModel):
             eleuther_model_wrapper = _VLMEvalWrapper
             if not self.enable_kv_cache:
@@ -546,6 +556,8 @@ class EleutherEvalRecipe(EvalRecipeInterface):
                 )
         elif isinstance(model, TransformerDecoder):
             eleuther_model_wrapper = _LLMEvalWrapper
+            if "max_gen_toks" in cfg:
+                extra_kwargs["max_gen_toks"] = cfg.max_gen_toks
         self.eleuther_model_wrapper = eleuther_model_wrapper(
             model,
             model_transform,
@@ -554,6 +566,7 @@ class EleutherEvalRecipe(EvalRecipeInterface):
             batch_size=self.batch_size,
             dtype=self.dtype,
             enable_kv_cache=self.enable_kv_cache,
+            **extra_kwargs,
         )
 
     def evaluate(self) -> None:
