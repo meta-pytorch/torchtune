@@ -4,6 +4,8 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import copy
+
 import pytest
 from tests.common import ASSETS
 from torchtune.data import Message
@@ -88,7 +90,7 @@ class TestMistralTokenizer:
 
     def test_tokenize_message_drop_eos(self, messages, expected_tokens):
         tokenizer = self.tokenizer(template=False)
-        tokens, mask = tokenizer.tokenize_messages(messages, add_eos=False)
+        tokens, mask = tokenizer.tokenize_messages(messages, add_end_tokens=False)
 
         # Drop eos token.
         expected_tokens = expected_tokens[:-1]
@@ -96,3 +98,22 @@ class TestMistralTokenizer:
         expected_mask = [True] * 75 + [False] * 124
         assert expected_tokens == tokens
         assert expected_mask == mask
+
+    def test_tokenize_message_drop_bos(self, messages, expected_tokens):
+        tokenizer = self.tokenizer(template=False)
+        tokens, mask = tokenizer.tokenize_messages(messages, add_start_tokens=False)
+
+        # Drop bos token.
+        expected_tokens = expected_tokens[1:]
+        expected_mask = [True] * 74 + [False] * 125
+        assert expected_tokens == tokens
+        assert expected_mask == mask
+
+    def test_call_inference_drops_end_tokens(self, messages):
+        tokenizer = self.tokenizer(template=False)
+        training_tokens, _ = tokenizer.tokenize_messages(copy.deepcopy(messages))
+
+        sample = tokenizer({"messages": copy.deepcopy(messages)}, inference=True)
+        inference_tokens = sample["tokens"]
+
+        assert inference_tokens == training_tokens[:-1]
