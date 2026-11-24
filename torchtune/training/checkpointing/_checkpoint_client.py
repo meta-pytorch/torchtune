@@ -97,6 +97,30 @@ class CheckpointClient:
         _, self._rank = utils.get_world_size_and_rank()
         self._is_rank_zero = self._rank == 0
 
+        self._validate_checkpointer_config()
+
+    def _validate_checkpointer_config(self) -> None:
+        """Validate that the configured checkpointer can load a base checkpoint."""
+        if self._checkpointer is not None:
+            return
+
+        checkpointer_config = self._cfg.get("checkpointer")
+        if checkpointer_config is None:
+            return
+
+        component = checkpointer_config.get("_component_")
+        if component in (
+            "torchtune.training.DistributedCheckpointer",
+            "torchtune.training.checkpointing.DistributedCheckpointer",
+        ):
+            raise ValueError(
+                "DistributedCheckpointer is used internally for asynchronous "
+                "intermediate checkpoints and cannot be configured as the base "
+                "checkpointer. Configure a model checkpointer, such as "
+                "FullModelHFCheckpointer, and set enable_async_checkpointing=True "
+                "to enable distributed checkpointing."
+            )
+
     def _get_checkpointer(self):
         """
         Builds and returns the user configured Checkpointer.
