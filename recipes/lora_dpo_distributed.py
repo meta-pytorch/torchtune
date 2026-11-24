@@ -612,7 +612,11 @@ class LoRADPORecipeDistributed(FTRecipeInterface):
         with self.activations_handling_ctx:
             all_logits = model(concatenated_input_ids)
 
-        all_log_probs = rlhf.get_batch_log_probs(all_logits, concatenated_labels)
+        all_log_probs = rlhf.get_batch_log_probs(
+            all_logits,
+            concatenated_labels,
+            return_average_logprobs=self._loss_fn.return_average_logprobs,
+        )
 
         chosen_log_probs = all_log_probs[:len_chosen]
         rejected_log_probs = all_log_probs[len_chosen:]
