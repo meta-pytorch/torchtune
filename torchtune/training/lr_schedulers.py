@@ -10,6 +10,7 @@ from typing import Union
 import torch
 from torch.optim.lr_scheduler import LambdaLR
 from torchtune.training.memory import OptimizerInBackwardWrapper
+from torchtune.modules.optim import Muon
 
 
 def _ensure_step_is_bound_like_method(optimizer):
@@ -115,7 +116,9 @@ def get_lr(
         )
 
     # LR Schedulers are the same across all param groups for full_finetune right now
+
     lr = param_groups[0]["lr"]
+    if isinstance(optimizer, Muon): return lr   # return Muon learning rate if Muon optimizer
     for group in param_groups:
         if group["lr"] != lr:
             raise RuntimeError("LR Schedulers are different across all param groups ")
